@@ -1,0 +1,61 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.sqlite
+backend/data/
+
+# Uploads
+backend/uploads/audio/*
+backend/uploads/images/*
+!backend/uploads/audio/.gitkeep
+!backend/uploads/images/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+coverage/
+
+# Personal music files
+Spotify_Hindi_Songs_Download/
+*.mp3
+
+# TypeScript
+*.tsbuildinfo
+
+# Planning & Internal docs (not needed for app to run)
+PLAN.md
+SETUP_PLAN.md
+VPS_SETUP_PLAN.md
+CLAUDE.md
+MAIN_RELEASE_IMPLEMENTATION.md
+metadata.json
+Summary*.md
+
+# Sensitive files
+Oracle_Cloud/
+*.key
+*.pem

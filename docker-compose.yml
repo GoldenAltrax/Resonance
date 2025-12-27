@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  resonance:
+    build: .
+    container_name: resonance
+    ports:
+      - "3000:3000"
+    volumes:
+      # Persist database and uploads outside the container
+      - resonance-data:/app/backend/data
+      - resonance-uploads:/app/backend/uploads
+    environment:
+      - NODE_ENV=production
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  resonance-data:
+    driver: local
+  resonance-uploads:
+    driver: local

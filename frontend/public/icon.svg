@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="256" fill="#27272a"/>
+
+  <!-- Single music note (eighth note) -->
+  <g fill="none" stroke="#a1a1aa" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Note head (oval) -->
+    <ellipse cx="220" cy="340" rx="40" ry="32" fill="#a1a1aa"/>
+    <!-- Stem -->
+    <line x1="260" y1="340" x2="260" y2="160"/>
+    <!-- Flag -->
+    <path d="M260 160 Q300 180 300 220 Q290 200 260 210" fill="#a1a1aa" stroke="#a1a1aa"/>
+  </g>
+</svg>

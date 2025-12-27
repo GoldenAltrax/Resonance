@@ -1,0 +1,32 @@
+# Caddyfile - Automatic HTTPS reverse proxy
+# Replace YOUR_DOMAIN with your actual domain (e.g., resonance.ibrahimkhaleelulla.com)
+
+YOUR_DOMAIN {
+    # Reverse proxy to Resonance app
+    reverse_proxy resonance:3000
+
+    # Enable compression
+    encode gzip zstd
+
+    # Security headers
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    # Handle large file uploads (for audio files)
+    request_body {
+        max_size 100MB
+    }
+
+    # Logging
+    log {
+        output file /data/access.log {
+            roll_size 10MB
+            roll_keep 5
+        }
+    }
+}
