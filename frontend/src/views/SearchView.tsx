@@ -287,28 +287,26 @@ const SearchView = () => {
                 {results.tracks.map((track) => (
                   <div
                     key={track.id}
-                    className="relative flex items-center gap-4 p-4 bg-zinc-900/50 hover:bg-zinc-800/70 rounded-xl transition-all group"
+                    className="relative flex items-center gap-2 sm:gap-4 p-3 sm:p-4 bg-zinc-900/50 hover:bg-zinc-800/70 rounded-xl transition-all group"
                   >
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <button
-                        onClick={() => handlePlayTrack(track)}
-                        className="w-12 h-12 bg-zinc-800 rounded-lg flex items-center justify-center group-hover:bg-zinc-700 transition-colors"
-                      >
-                        <Play className="w-5 h-5 text-zinc-400 group-hover:text-white" />
-                      </button>
-                      <button
-                        onClick={(e) => handleStartRadio(track, e)}
-                        disabled={loadingRadio === track.id}
-                        className="w-10 h-10 bg-zinc-800/50 rounded-lg flex items-center justify-center hover:bg-green-900/30 hover:text-green-400 transition-colors text-zinc-500 opacity-0 group-hover:opacity-100"
-                        title="Start Radio"
-                      >
-                        {loadingRadio === track.id ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Radio className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => handlePlayTrack(track)}
+                      className="w-10 h-10 sm:w-12 sm:h-12 bg-zinc-800 rounded-lg flex items-center justify-center group-hover:bg-zinc-700 transition-colors flex-shrink-0"
+                    >
+                      <Play className="w-4 h-4 sm:w-5 sm:h-5 text-zinc-400 group-hover:text-white" />
+                    </button>
+                    <button
+                      onClick={(e) => handleStartRadio(track, e)}
+                      disabled={loadingRadio === track.id}
+                      className="hidden sm:flex w-10 h-10 bg-zinc-800/50 rounded-lg items-center justify-center hover:bg-green-900/30 hover:text-green-400 transition-colors text-zinc-500 opacity-0 group-hover:opacity-100 flex-shrink-0"
+                      title="Start Radio"
+                    >
+                      {loadingRadio === track.id ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Radio className="w-4 h-4" />
+                      )}
+                    </button>
                     <div
                       className="flex-1 text-left cursor-pointer min-w-0"
                       onClick={() => handlePlayTrack(track)}
@@ -322,26 +320,26 @@ const SearchView = () => {
                       {track.duration > 0 ? formatDuration(track.duration) : '--:--'}
                     </span>
 
-                    {/* Favorite button - always visible when favorited */}
+                    {/* Favorite button - hidden on mobile, always visible when favorited on desktop */}
                     <button
                       onClick={(e) => { e.stopPropagation(); toggleFavorite(track); }}
-                      className={`flex-shrink-0 transition-all duration-200 ${
+                      className={`flex-shrink-0 transition-all duration-200 hidden sm:block ${
                         isFavorited(track.id)
-                          ? 'text-pink-500 hover:text-pink-400'
+                          ? 'text-pink-500 hover:text-pink-400 !block'
                           : 'text-zinc-600 hover:text-pink-500 opacity-0 group-hover:opacity-100'
                       }`}
                     >
                       <Heart className={`w-5 h-5 ${isFavorited(track.id) ? 'fill-current' : ''}`} />
                     </button>
 
-                    {/* Three-dot menu */}
+                    {/* Three-dot menu - always visible on mobile */}
                     <div className="flex-shrink-0">
                       <button
                         ref={(el) => {
                           if (el) menuButtonRefs.current.set(track.id, el);
                         }}
                         onClick={(e) => toggleTrackMenu(track.id, e)}
-                        className="p-1 text-zinc-600 hover:text-white transition-colors opacity-0 group-hover:opacity-100"
+                        className="p-1 text-zinc-600 hover:text-white transition-colors sm:opacity-0 sm:group-hover:opacity-100"
                       >
                         <MoreHorizontal className="w-5 h-5" />
                       </button>
