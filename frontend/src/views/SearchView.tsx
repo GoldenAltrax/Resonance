@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Search as SearchIcon, TrendingUp, Compass, Headphones, Music, ListMusic, Loader2, Play, X, MoreHorizontal, Heart, Plus, ListEnd, ListStart, Radio } from 'lucide-react';
 import { api, Track, Playlist } from '@/services/api';
 import { usePlayerStore } from '@/stores/playerStore';
@@ -18,7 +18,9 @@ const SearchView = () => {
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
   const [activeTrackMenu, setActiveTrackMenu] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const [showPlaylistPicker, setShowPlaylistPicker] = useState<Track | null>(null);
+  const menuButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
   const { play, addToQueue, playNext, startRadio } = usePlayerStore();
   const { playlists, addTrackToPlaylist } = usePlaylistStore();
@@ -142,7 +144,34 @@ const SearchView = () => {
   // Toggle track menu
   const toggleTrackMenu = (trackId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    setActiveTrackMenu(activeTrackMenu === trackId ? null : trackId);
+    if (activeTrackMenu === trackId) {
+      setActiveTrackMenu(null);
+      setMenuPosition(null);
+    } else {
+      const button = menuButtonRefs.current.get(trackId);
+      if (button) {
+        const rect = button.getBoundingClientRect();
+        // Position menu above the button, accounting for player bar (h-24 = 96px)
+        const menuHeight = 200; // Approximate menu height
+        const spaceAbove = rect.top;
+        const spaceBelow = window.innerHeight - rect.bottom - 96; // 96px for player bar
+
+        if (spaceAbove > menuHeight || spaceAbove > spaceBelow) {
+          // Open upward
+          setMenuPosition({
+            top: rect.top - menuHeight - 8,
+            left: rect.right - 180, // Menu width is 180px
+          });
+        } else {
+          // Open downward
+          setMenuPosition({
+            top: rect.bottom + 8,
+            left: rect.right - 180,
+          });
+        }
+      }
+      setActiveTrackMenu(trackId);
+    }
   };
 
   // Handle favorite toggle from menu
@@ -306,47 +335,16 @@ const SearchView = () => {
                     </button>
 
                     {/* Three-dot menu */}
-                    <div className="relative flex-shrink-0">
+                    <div className="flex-shrink-0">
                       <button
+                        ref={(el) => {
+                          if (el) menuButtonRefs.current.set(track.id, el);
+                        }}
                         onClick={(e) => toggleTrackMenu(track.id, e)}
                         className="p-1 text-zinc-600 hover:text-white transition-colors opacity-0 group-hover:opacity-100"
                       >
                         <MoreHorizontal className="w-5 h-5" />
                       </button>
-
-                      {activeTrackMenu === track.id && (
-                        <div className="absolute right-0 bottom-full mb-2 z-[60] bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl py-1 min-w-[180px]">
-                          <button
-                            onClick={(e) => handlePlayNext(track, e)}
-                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-                          >
-                            <ListStart className="w-4 h-4" />
-                            Play Next
-                          </button>
-                          <button
-                            onClick={(e) => handleAddToQueue(track, e)}
-                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-                          >
-                            <ListEnd className="w-4 h-4" />
-                            Add to Queue
-                          </button>
-                          <div className="h-px bg-zinc-800/50 my-1" />
-                          <button
-                            onClick={(e) => handleFavoriteFromMenu(track, e)}
-                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-                          >
-                            <Heart className={`w-4 h-4 ${isFavorited(track.id) ? 'fill-pink-500 text-pink-500' : ''}`} />
-                            {isFavorited(track.id) ? 'Remove from Liked' : 'Add to Liked Songs'}
-                          </button>
-                          <button
-                            onClick={(e) => handleAddToPlaylist(track, e)}
-                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-                          >
-                            <Plus className="w-4 h-4" />
-                            Add to Playlist
-                          </button>
-                        </div>
-                      )}
                     </div>
                   </div>
                 ))}
@@ -445,7 +443,53 @@ const SearchView = () => {
 
       {/* Click outside to close menu */}
       {activeTrackMenu && (
-        <div className="fixed inset-0 z-10" onClick={() => setActiveTrackMenu(null)} />
+        <div className="fixed inset-0 z-[55]" onClick={() => { setActiveTrackMenu(null); setMenuPosition(null); }} />
+      )}
+
+      {/* Fixed position dropdown menu */}
+      {activeTrackMenu && menuPosition && (
+        <div
+          className="fixed z-[60] bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl py-1 min-w-[180px]"
+          style={{ top: menuPosition.top, left: menuPosition.left }}
+        >
+          {(() => {
+            const track = results.tracks.find(t => t.id === activeTrackMenu);
+            if (!track) return null;
+            return (
+              <>
+                <button
+                  onClick={(e) => handlePlayNext(track, e)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
+                >
+                  <ListStart className="w-4 h-4" />
+                  Play Next
+                </button>
+                <button
+                  onClick={(e) => handleAddToQueue(track, e)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
+                >
+                  <ListEnd className="w-4 h-4" />
+                  Add to Queue
+                </button>
+                <div className="h-px bg-zinc-800/50 my-1" />
+                <button
+                  onClick={(e) => handleFavoriteFromMenu(track, e)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
+                >
+                  <Heart className={`w-4 h-4 ${isFavorited(track.id) ? 'fill-pink-500 text-pink-500' : ''}`} />
+                  {isFavorited(track.id) ? 'Remove from Liked' : 'Add to Liked Songs'}
+                </button>
+                <button
+                  onClick={(e) => handleAddToPlaylist(track, e)}
+                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add to Playlist
+                </button>
+              </>
+            );
+          })()}
+        </div>
       )}
 
       {/* Playlist Picker Modal */}
