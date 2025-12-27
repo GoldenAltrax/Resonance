@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1766648291413,
+      "tag": "0000_stiff_chronomancer",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1766652759955,
+      "tag": "0001_groovy_warlock",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1766689409257,
+      "tag": "0002_dear_satana",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1766692698637,
+      "tag": "0003_tough_nekra",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1766693121104,
+      "tag": "0004_clever_blizzard",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1766834446564,
+      "tag": "0005_redundant_professor_monster",
+      "breakpoints": true
+    }
+  ]
+}

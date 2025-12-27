@@ -1,0 +1,62 @@
+version: '3.8'
+
+# Production Docker Compose with Caddy for automatic HTTPS
+# Usage: docker-compose -f docker-compose.prod.yml up -d
+
+services:
+  # Caddy - Reverse proxy with automatic HTTPS
+  caddy:
+    image: caddy:2-alpine
+    container_name: resonance-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - resonance
+    networks:
+      - resonance-network
+
+  # Resonance App
+  resonance:
+    build: .
+    container_name: resonance-app
+    restart: unless-stopped
+    expose:
+      - "3000"
+    volumes:
+      - resonance-data:/app/backend/data
+      - resonance-uploads:/app/backend/uploads
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=/app/backend/data/resonance.db
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - resonance-network
+
+networks:
+  resonance-network:
+    driver: bridge
+
+volumes:
+  resonance-data:
+    driver: local
+  resonance-uploads:
+    driver: local
+  caddy-data:
+    driver: local
+  caddy-config:
+    driver: local
