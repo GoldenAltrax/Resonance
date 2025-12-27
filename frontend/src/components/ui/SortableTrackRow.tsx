@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Play, MoreHorizontal, GripVertical, Heart, Trash2, ListPlus, ListEnd, ListStart, Check } from 'lucide-react';
@@ -38,19 +38,58 @@ const SortableTrackRow = ({
 }: SortableTrackRowProps) => {
   const [showMenu, setShowMenu] = useState(false);
   const [showPlaylistSubmenu, setShowPlaylistSubmenu] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const { isFavorited, toggleFavorite } = useFavoritesStore();
   const { addToQueue, playNext } = usePlayerStore();
+
+  const toggleMenu = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (showMenu) {
+      setShowMenu(false);
+      setShowPlaylistSubmenu(false);
+      setMenuPosition(null);
+      return;
+    }
+
+    const button = menuButtonRef.current;
+    if (button) {
+      const rect = button.getBoundingClientRect();
+      const menuHeight = 280; // Approximate menu height
+      const menuWidth = 200;
+      const playerBarHeight = 96; // Player bar at bottom
+      const spaceBelow = window.innerHeight - rect.bottom - playerBarHeight;
+      const spaceAbove = rect.top;
+
+      let top: number;
+      if (spaceBelow >= menuHeight || spaceBelow > spaceAbove) {
+        // Open downward
+        top = rect.bottom + 8;
+      } else {
+        // Open upward
+        top = rect.top - menuHeight - 8;
+      }
+
+      // Ensure menu doesn't go off-screen horizontally
+      const left = Math.max(8, rect.right - menuWidth);
+
+      setMenuPosition({ top, left });
+    }
+    setShowMenu(true);
+  };
 
   const handleAddToQueue = () => {
     addToQueue([track]);
     toast.success('Added to queue');
     setShowMenu(false);
+    setMenuPosition(null);
   };
 
   const handlePlayNext = () => {
     playNext(track);
     toast.success('Playing next');
     setShowMenu(false);
+    setMenuPosition(null);
   };
 
   const {
@@ -159,30 +198,31 @@ const SortableTrackRow = ({
       </div>
 
       {/* More Button */}
-      <div className="w-8 flex justify-end relative">
+      <div className="w-8 flex justify-end">
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setShowMenu(!showMenu);
-            setShowPlaylistSubmenu(false);
-          }}
+          ref={menuButtonRef}
+          onClick={toggleMenu}
           className="text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
         >
           <MoreHorizontal className="w-5 h-5" />
         </button>
 
-        {/* Dropdown Menu */}
-        {showMenu && (
+        {/* Dropdown Menu - Fixed positioned to avoid clipping */}
+        {showMenu && menuPosition && (
           <>
             <div
-              className="fixed inset-0 z-40"
+              className="fixed inset-0 z-[55]"
               onClick={(e) => {
                 e.stopPropagation();
                 setShowMenu(false);
                 setShowPlaylistSubmenu(false);
+                setMenuPosition(null);
               }}
             />
-            <div className="absolute right-0 top-8 z-50 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl py-1 min-w-[200px]">
+            <div
+              className="fixed z-[60] bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl py-1 min-w-[200px]"
+              style={{ top: menuPosition.top, left: menuPosition.left }}
+            >
               {/* Play Next */}
               <button
                 onClick={(e) => {
@@ -215,6 +255,7 @@ const SortableTrackRow = ({
                   e.stopPropagation();
                   toggleFavorite(track);
                   setShowMenu(false);
+                  setMenuPosition(null);
                 }}
                 className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
               >
@@ -252,6 +293,7 @@ const SortableTrackRow = ({
                             }
                             setShowMenu(false);
                             setShowPlaylistSubmenu(false);
+                            setMenuPosition(null);
                           }}
                           className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors text-left"
                         >
@@ -277,6 +319,7 @@ const SortableTrackRow = ({
                     e.stopPropagation();
                     onRemoveFromPlaylist();
                     setShowMenu(false);
+                    setMenuPosition(null);
                   }}
                   className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors border-t border-zinc-800/50"
                 >
