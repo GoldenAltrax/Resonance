@@ -55,7 +55,7 @@ const SortableTrackRow = ({
     const button = menuButtonRef.current;
     if (button) {
       const rect = button.getBoundingClientRect();
-      const menuHeight = 280; // Approximate menu height
+      const menuHeight = 240; // Approximate menu height
       const menuWidth = 200;
       const playerBarHeight = 96; // Player bar at bottom
       const spaceBelow = window.innerHeight - rect.bottom - playerBarHeight;
@@ -229,7 +229,7 @@ const SortableTrackRow = ({
                   e.stopPropagation();
                   handlePlayNext();
                 }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
+                className="w-full flex items-center gap-3 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
               >
                 <ListStart className="w-4 h-4" />
                 Play Next
@@ -241,7 +241,7 @@ const SortableTrackRow = ({
                   e.stopPropagation();
                   handleAddToQueue();
                 }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
+                className="w-full flex items-center gap-3 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
               >
                 <ListEnd className="w-4 h-4" />
                 Add to Queue
@@ -257,7 +257,7 @@ const SortableTrackRow = ({
                   setShowMenu(false);
                   setMenuPosition(null);
                 }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
+                className="w-full flex items-center gap-3 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
               >
                 <Heart className={`w-4 h-4 ${isFavorited(track.id) ? 'fill-pink-500 text-pink-500' : ''}`} />
                 {isFavorited(track.id) ? 'Remove from Liked' : 'Add to Liked Songs'}
@@ -271,7 +271,7 @@ const SortableTrackRow = ({
                       e.stopPropagation();
                       setShowPlaylistSubmenu(!showPlaylistSubmenu);
                     }}
-                    className="w-full flex items-center justify-between gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
+                    className="w-full flex items-center justify-between gap-3 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
                   >
                     <div className="flex items-center gap-3">
                       <ListPlus className="w-4 h-4" />
@@ -295,7 +295,7 @@ const SortableTrackRow = ({
                             setShowPlaylistSubmenu(false);
                             setMenuPosition(null);
                           }}
-                          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors text-left"
+                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors text-left"
                         >
                           <div className="w-8 h-8 bg-zinc-800 rounded overflow-hidden flex-shrink-0">
                             <img
@@ -321,7 +321,7 @@ const SortableTrackRow = ({
                     setShowMenu(false);
                     setMenuPosition(null);
                   }}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors border-t border-zinc-800/50"
+                  className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors border-t border-zinc-800/50"
                 >
                   <Trash2 className="w-4 h-4" />
                   Remove from Playlist
