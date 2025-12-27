@@ -315,7 +315,7 @@ const SearchView = () => {
                       </button>
 
                       {activeTrackMenu === track.id && (
-                        <div className="absolute right-0 top-8 z-20 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl py-1 min-w-[180px]">
+                        <div className="absolute right-0 bottom-full mb-2 z-[60] bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl py-1 min-w-[180px]">
                           <button
                             onClick={(e) => handlePlayNext(track, e)}
                             className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
