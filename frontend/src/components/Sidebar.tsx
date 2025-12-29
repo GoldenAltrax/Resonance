@@ -28,7 +28,12 @@ const Sidebar = ({ activePage, setActivePage, playlists, onPlaylistClick }: Side
     setShowLogoutConfirm(false);
     setIsLoggingOut(true);
     // Show animation for 1.5s before logging out
-    setTimeout(() => logout(), 1500);
+    setTimeout(() => {
+      logout().catch((err) => {
+        console.error('Logout failed:', err);
+        // Still proceed with logout even on error (will clear local state)
+      });
+    }, 1500);
   };
 
   // Show logging out animation

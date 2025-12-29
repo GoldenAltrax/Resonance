@@ -43,6 +43,13 @@
       "when": 1766834446564,
       "tag": "0005_redundant_professor_monster",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1735500000000,
+      "tag": "0006_add_performance_indexes",
+      "breakpoints": true
     }
   ]
 }

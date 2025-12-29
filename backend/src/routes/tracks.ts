@@ -3,14 +3,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { createWriteStream } from 'fs';
 import { mkdir, unlink, stat } from 'fs/promises';
 import { pipeline } from 'stream/promises';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { parseFile } from 'music-metadata';
 import { z } from 'zod';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { db, tracks } from '../db/index.js';
-import { eq } from 'drizzle-orm';
+import { eq, ne, sql } from 'drizzle-orm';
 import { authMiddleware, adminMiddleware } from '../middleware/auth.js';
 
 const execFileAsync = promisify(execFile);
@@ -24,12 +24,25 @@ const checkDuplicatesSchema = z.object({
 });
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const UPLOADS_DIR = join(__dirname, '..', '..', 'uploads', 'audio');
-const TEMP_DIR = join(__dirname, '..', '..', 'uploads', 'temp');
+const UPLOADS_DIR = resolve(__dirname, '..', '..', 'uploads', 'audio');
+const UPLOADS_BASE = resolve(__dirname, '..', '..', 'uploads');
+const TEMP_DIR = resolve(__dirname, '..', '..', 'uploads', 'temp');
 
 // Ensure directories exist
 await mkdir(UPLOADS_DIR, { recursive: true });
 await mkdir(TEMP_DIR, { recursive: true });
+
+// Resolve path from stored filePath (e.g., "audio/uuid.mp3")
+function resolveStoredFilePath(storedPath: string): string | null {
+  // Stored paths are like "audio/filename.mp3" - resolve relative to uploads base
+  const fullPath = resolve(UPLOADS_BASE, storedPath);
+
+  // Verify the resolved path is still within the uploads directory
+  if (!fullPath.startsWith(UPLOADS_BASE)) {
+    return null;
+  }
+  return fullPath;
+}
 
 // Musical key compatibility map (for Radio mode similarity matching)
 const KEY_COMPATIBILITY: Record<string, string[]> = {
@@ -324,10 +337,14 @@ export async function trackRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Track not found' });
     }
 
-    // Delete file from filesystem
+    // Delete file from filesystem (secure path resolution)
     try {
-      const filePath = join(UPLOADS_DIR, '..', track.filePath);
-      await unlink(filePath);
+      const filePath = resolveStoredFilePath(track.filePath);
+      if (filePath) {
+        await unlink(filePath);
+      } else {
+        console.warn('Invalid file path for track deletion:', track.filePath);
+      }
     } catch (err) {
       console.warn('Failed to delete track file:', err);
     }
@@ -368,14 +385,19 @@ export async function trackRoutes(app: FastifyInstance) {
         existingTrack: typeof tracks.$inferSelect;
       }> = [];
 
-      // Get all tracks for comparison (global library)
-      const allTracks = await db.query.tracks.findMany();
+      // Extract normalized titles for database query
+      const normalizedTitles = body.tracks.map(t => t.title.toLowerCase().trim());
 
-      // Check each incoming track against existing library
+      // Query only tracks that might match (filter at database level for performance)
+      const potentialMatches = await db.query.tracks.findMany({
+        where: sql`lower(${tracks.originalFilename}) IN (${sql.join(normalizedTitles.map(t => sql`${t}`), sql`, `)}) OR lower(${tracks.title}) IN (${sql.join(normalizedTitles.map(t => sql`${t}`), sql`, `)})`
+      });
+
+      // Check each incoming track against potential matches
       for (const incoming of body.tracks) {
         const normalizedTitle = incoming.title.toLowerCase().trim();
 
-        const match = allTracks.find((existing) => {
+        const match = potentialMatches.find((existing) => {
           const existingFilename = existing.originalFilename?.toLowerCase().trim();
           const existingTitle = existing.title.toLowerCase().trim();
 
@@ -426,9 +448,10 @@ export async function trackRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Track not found' });
     }
 
-    // Get all tracks except the source
-    const allTracks = await db.query.tracks.findMany();
-    const otherTracks = allTracks.filter(t => t.id !== id);
+    // Get all tracks except the source (filter at database level for performance)
+    const otherTracks = await db.query.tracks.findMany({
+      where: ne(tracks.id, id),
+    });
 
     // Calculate similarity score for each track
     const scoredTracks = otherTracks.map(track => {
@@ -525,7 +548,12 @@ export async function trackRoutes(app: FastifyInstance) {
 
     for (const track of tracksToAnalyze) {
       try {
-        const filePath = join(UPLOADS_DIR, '..', track.filePath);
+        const filePath = resolveStoredFilePath(track.filePath);
+        if (!filePath) {
+          console.warn('Invalid file path for track analysis:', track.filePath);
+          failed++;
+          continue;
+        }
         const analysis = await analyzeAudio(filePath);
 
         await db.update(tracks)

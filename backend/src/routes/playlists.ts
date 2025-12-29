@@ -2,17 +2,36 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { mkdir, unlink, writeFile } from 'fs/promises';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { db, playlists, playlistTracks, tracks } from '../db/index.js';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { authMiddleware } from '../middleware/auth.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const IMAGES_DIR = join(__dirname, '..', '..', 'uploads', 'images');
+const IMAGES_DIR = resolve(__dirname, '..', '..', 'uploads', 'images');
+const UPLOADS_BASE = resolve(__dirname, '..', '..', 'uploads');
 
 // Ensure images directory exists
 await mkdir(IMAGES_DIR, { recursive: true });
+
+// Allowed image extensions whitelist
+const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+
+// Resolve path from stored path (e.g., "images/playlist-uuid.jpg")
+function resolveStoredFilePath(storedPath: string): string | null {
+  const fullPath = resolve(UPLOADS_BASE, storedPath);
+  if (!fullPath.startsWith(UPLOADS_BASE)) {
+    return null;
+  }
+  return fullPath;
+}
+
+// Validate and sanitize file extension
+function getSafeExtension(filename: string): string {
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  return ALLOWED_IMAGE_EXTENSIONS.includes(ext) ? ext : 'jpg';
+}
 
 const createPlaylistSchema = z.object({
   name: z.string().min(1).max(100),
@@ -247,17 +266,18 @@ export async function playlistRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: 'Playlist not found' });
       }
 
-      // Update positions for each track
-      for (let i = 0; i < body.trackIds.length; i++) {
-        const trackId = body.trackIds[i];
-        if (trackId) {
-          await db.update(playlistTracks)
-            .set({ position: i + 1 })
-            .where(and(
-              eq(playlistTracks.playlistId, id),
-              eq(playlistTracks.trackId, trackId)
-            ));
-        }
+      // Update positions using batch SQL CASE statement (eliminates N+1 queries)
+      if (body.trackIds.length > 0) {
+        const cases = body.trackIds
+          .map((trackId, i) => `WHEN '${trackId}' THEN ${i + 1}`)
+          .join(' ');
+
+        await db.run(sql`
+          UPDATE playlist_tracks
+          SET position = CASE track_id ${sql.raw(cases)} END
+          WHERE playlist_id = ${id}
+          AND track_id IN (${sql.join(body.trackIds.map(tid => sql`${tid}`), sql`, `)})
+        `);
       }
 
       return reply.send({ message: 'Tracks reordered successfully' });
@@ -309,16 +329,18 @@ export async function playlistRoutes(app: FastifyInstance) {
 
     const fileBuffer = Buffer.concat(chunks);
 
-    // Generate unique filename
-    const ext = data.filename.split('.').pop() || 'jpg';
+    // Generate unique filename with validated extension
+    const ext = getSafeExtension(data.filename);
     const filename = `playlist-${id}.${ext}`;
     const filePath = join(IMAGES_DIR, filename);
 
-    // Delete old cover if exists
+    // Delete old cover if exists (secure path resolution)
     if (playlist.coverImage) {
       try {
-        const oldPath = join(IMAGES_DIR, '..', playlist.coverImage);
-        await unlink(oldPath);
+        const oldPath = resolveStoredFilePath(playlist.coverImage);
+        if (oldPath) {
+          await unlink(oldPath);
+        }
       } catch {
         // Ignore if file doesn't exist
       }

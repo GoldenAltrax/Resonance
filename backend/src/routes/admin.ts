@@ -2,13 +2,13 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { db, users, tracks, playlists, inviteCodes } from '../db/index.js';
-import { eq, count, desc } from 'drizzle-orm';
+import { eq, count, desc, sql } from 'drizzle-orm';
 import { adminMiddleware } from '../middleware/auth.js';
 import crypto from 'crypto';
 
-// Generate a random invite code
+// Generate a random invite code with sufficient entropy (8 bytes = 64 bits)
 function generateInviteCode(): string {
-  return crypto.randomBytes(4).toString('hex').toUpperCase();
+  return crypto.randomBytes(8).toString('hex').toUpperCase();
 }
 
 const createInviteCodeSchema = z.object({
@@ -49,38 +49,20 @@ export async function adminRoutes(app: FastifyInstance) {
     });
   });
 
-  // Get all users
+  // Get all users with counts (single query using subqueries - eliminates N+1)
   app.get('/users', async (_request: FastifyRequest, reply: FastifyReply) => {
-    const allUsers = await db.query.users.findMany({
-      columns: {
-        id: true,
-        username: true,
-        email: true,
-        profileImage: true,
-        createdAt: true,
-      },
-      orderBy: [desc(users.createdAt)],
-    });
-
-    // Get track and playlist counts for each user
-    const usersWithStats = await Promise.all(
-      allUsers.map(async (user) => {
-        const userTracksResult = await db
-          .select({ count: count() })
-          .from(tracks)
-          .where(eq(tracks.userId, user.id));
-        const userPlaylistsResult = await db
-          .select({ count: count() })
-          .from(playlists)
-          .where(eq(playlists.userId, user.id));
-
-        return {
-          ...user,
-          trackCount: userTracksResult[0]?.count ?? 0,
-          playlistCount: userPlaylistsResult[0]?.count ?? 0,
-        };
+    const usersWithStats = await db
+      .select({
+        id: users.id,
+        username: users.username,
+        email: users.email,
+        profileImage: users.profileImage,
+        createdAt: users.createdAt,
+        trackCount: sql<number>`(SELECT COUNT(*) FROM tracks WHERE tracks.user_id = ${users.id})`.as('track_count'),
+        playlistCount: sql<number>`(SELECT COUNT(*) FROM playlists WHERE playlists.user_id = ${users.id})`.as('playlist_count'),
       })
-    );
+      .from(users)
+      .orderBy(desc(users.createdAt));
 
     return reply.send(usersWithStats);
   });

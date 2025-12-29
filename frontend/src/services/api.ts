@@ -184,6 +184,37 @@ class ApiClient {
     });
   }
 
+  // Create an authenticated blob URL for audio streaming (avoids exposing token in URL)
+  async getSecureStreamUrl(id: string): Promise<string> {
+    if (!this.token) {
+      throw new Error('Not authenticated');
+    }
+
+    const response = await fetch(`${API_URL}/tracks/${id}/stream`, {
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+      },
+    });
+
+    if (!response.ok) {
+      if (response.status === 401 && this.onSessionExpired) {
+        this.onSessionExpired();
+      }
+      throw new Error('Failed to fetch audio stream');
+    }
+
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+  }
+
+  // Revoke a blob URL to free memory
+  revokeStreamUrl(url: string) {
+    if (url.startsWith('blob:')) {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  // Legacy method for backwards compatibility (deprecated - use getSecureStreamUrl)
   getTrackStreamUrl(id: string) {
     // Include token as query param for HTML5 Audio element (can't send headers)
     const tokenParam = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
