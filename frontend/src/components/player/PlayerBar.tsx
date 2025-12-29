@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Play,
   Pause,
@@ -71,6 +71,10 @@ export const PlayerBar = () => {
   const [timeRemaining, setTimeRemaining] = useState<string | null>(null);
 
   // Check sleep timer and update remaining time display
+  // Note: checkSleepTimer is stable from the store, so we use a ref to avoid interval recreations
+  const checkSleepTimerRef = React.useRef(checkSleepTimer);
+  checkSleepTimerRef.current = checkSleepTimer;
+
   useEffect(() => {
     if (!sleepTimerEnd) {
       setTimeRemaining(null);
@@ -78,7 +82,7 @@ export const PlayerBar = () => {
     }
 
     const interval = setInterval(() => {
-      checkSleepTimer();
+      checkSleepTimerRef.current();
       const remaining = sleepTimerEnd - Date.now();
       if (remaining <= 0) {
         setTimeRemaining(null);
@@ -90,7 +94,7 @@ export const PlayerBar = () => {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [sleepTimerEnd, checkSleepTimer]);
+  }, [sleepTimerEnd]);
 
   if (!currentTrack) {
     return null;

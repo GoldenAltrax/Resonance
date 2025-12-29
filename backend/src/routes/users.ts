@@ -1,17 +1,36 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { mkdir, unlink, writeFile } from 'fs/promises';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { db, users } from '../db/index.js';
 import { eq } from 'drizzle-orm';
 import { authMiddleware } from '../middleware/auth.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const IMAGES_DIR = join(__dirname, '..', '..', 'uploads', 'images');
+const IMAGES_DIR = resolve(__dirname, '..', '..', 'uploads', 'images');
+const UPLOADS_BASE = resolve(__dirname, '..', '..', 'uploads');
 
 // Ensure images directory exists
 await mkdir(IMAGES_DIR, { recursive: true });
+
+// Allowed image extensions whitelist
+const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+
+// Resolve path from stored path (e.g., "images/avatar-uuid.jpg")
+function resolveStoredFilePath(storedPath: string): string | null {
+  const fullPath = resolve(UPLOADS_BASE, storedPath);
+  if (!fullPath.startsWith(UPLOADS_BASE)) {
+    return null;
+  }
+  return fullPath;
+}
+
+// Validate and sanitize file extension
+function getSafeExtension(filename: string): string {
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  return ALLOWED_IMAGE_EXTENSIONS.includes(ext) ? ext : 'jpg';
+}
 
 const updateUserSchema = z.object({
   username: z.string().min(2).max(50).optional(),
@@ -126,16 +145,18 @@ export async function userRoutes(app: FastifyInstance) {
 
     const fileBuffer = Buffer.concat(chunks);
 
-    // Generate unique filename
-    const ext = data.filename.split('.').pop() || 'jpg';
+    // Generate unique filename with validated extension
+    const ext = getSafeExtension(data.filename);
     const filename = `avatar-${id}.${ext}`;
     const filePath = join(IMAGES_DIR, filename);
 
-    // Delete old avatar if exists and is a local file
+    // Delete old avatar if exists and is a local file (secure path resolution)
     if (user.profileImage && user.profileImage.startsWith('images/')) {
       try {
-        const oldPath = join(IMAGES_DIR, '..', user.profileImage);
-        await unlink(oldPath);
+        const oldPath = resolveStoredFilePath(user.profileImage);
+        if (oldPath) {
+          await unlink(oldPath);
+        }
       } catch {
         // Ignore if file doesn't exist
       }

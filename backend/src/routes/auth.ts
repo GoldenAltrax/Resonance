@@ -3,7 +3,7 @@ import { z } from 'zod';
 import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { db, users, inviteCodes } from '../db/index.js';
-import { eq, and, or, isNull, gt } from 'drizzle-orm';
+import { eq, and, or, isNull, gt, sql } from 'drizzle-orm';
 import { isAdmin } from '../middleware/auth.js';
 
 // Password must be 8+ chars with at least: 1 uppercase, 1 lowercase, 1 number
@@ -103,10 +103,10 @@ export async function authRoutes(app: FastifyInstance) {
         passwordHash,
       });
 
-      // Increment invite code usage if a database code was used
+      // Increment invite code usage atomically using SQL (prevents race condition)
       if (validInviteCode) {
         await db.update(inviteCodes)
-          .set({ usedCount: validInviteCode.usedCount + 1 })
+          .set({ usedCount: sql`${inviteCodes.usedCount} + 1` })
           .where(eq(inviteCodes.id, validInviteCode.id));
       }
 

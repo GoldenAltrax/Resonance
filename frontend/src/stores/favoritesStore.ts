@@ -42,16 +42,18 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
   },
 
   toggleFavorite: async (track: Track) => {
-    const { favoriteIds, favorites } = get();
-    const isFav = favoriteIds.has(track.id);
+    // Capture the original state at the start for reliable reversion
+    const originalFavoriteIds = new Set(get().favoriteIds);
+    const originalFavorites = [...get().favorites];
+    const isFav = originalFavoriteIds.has(track.id);
 
     // Optimistic update
-    const newIds = new Set(favoriteIds);
+    const newIds = new Set(originalFavoriteIds);
     if (isFav) {
       newIds.delete(track.id);
       set({
         favoriteIds: newIds,
-        favorites: favorites.filter(f => f.trackId !== track.id),
+        favorites: originalFavorites.filter(f => f.trackId !== track.id),
       });
     } else {
       newIds.add(track.id);
@@ -65,7 +67,7 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
       };
       set({
         favoriteIds: newIds,
-        favorites: [optimisticFavorite, ...favorites],
+        favorites: [optimisticFavorite, ...originalFavorites],
       });
     }
 
@@ -78,22 +80,12 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
         get().fetchFavorites();
       }
     } catch (error) {
-      // Revert on error
+      // Revert to original state on error (captures at start to avoid race conditions)
       console.error('Failed to toggle favorite:', error);
-      if (isFav) {
-        // Revert remove
-        const revertIds = new Set(get().favoriteIds);
-        revertIds.add(track.id);
-        set({ favoriteIds: revertIds });
-      } else {
-        // Revert add
-        const revertIds = new Set(get().favoriteIds);
-        revertIds.delete(track.id);
-        set({
-          favoriteIds: revertIds,
-          favorites: get().favorites.filter(f => f.trackId !== track.id),
-        });
-      }
+      set({
+        favoriteIds: originalFavoriteIds,
+        favorites: originalFavorites,
+      });
     }
   },
 
