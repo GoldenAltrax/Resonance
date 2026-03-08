@@ -2,8 +2,9 @@
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    App, Runtime,
 };
-use tauri::{App, AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct TrayCommand {
@@ -32,6 +33,8 @@ fn update_tray(
         tray.set_tooltip(Some(&tooltip))
             .map_err(|e| e.to_string())?;
     }
+    #[cfg(target_os = "android")]
+    let _ = (app, track_name, artist, is_playing);
     Ok(())
 }
 
@@ -98,14 +101,19 @@ fn setup_tray<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
 }
 
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_window_state::Builder::new().build())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_sql::Builder::default().build())
+        .plugin(tauri_plugin_updater::Builder::new().build());
+
+    #[cfg(not(target_os = "android"))]
+    let builder = builder
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_window_state::Builder::new().build());
+
+    builder
         .invoke_handler(tauri::generate_handler![update_tray])
         .setup(|app| {
             #[cfg(not(target_os = "android"))]
