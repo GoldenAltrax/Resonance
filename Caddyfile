@@ -9,11 +9,6 @@
 }
 
 ubuntu-minecraft-vm.tail1d6ee2.ts.net {
-    tls {
-        # Tailscale provides certs automatically for *.ts.net hostnames
-        # If this doesn't work, comment out the tls block and Caddy will use HTTP
-    }
-
     # Reverse proxy to Resonance app container
     reverse_proxy resonance:3000
 
