@@ -8,7 +8,7 @@
     # Remove this block if using a public domain (Caddy auto-provisions Let's Encrypt)
 }
 
-YOUR_TAILSCALE_HOSTNAME {
+ubuntu-minecraft-vm.tail1d6ee2.ts.net {
     tls {
         # Tailscale provides certs automatically for *.ts.net hostnames
         # If this doesn't work, comment out the tls block and Caddy will use HTTP
