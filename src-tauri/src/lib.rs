@@ -1,8 +1,9 @@
+#[cfg(not(target_os = "android"))]
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    App, AppHandle, Emitter, Manager, Runtime,
 };
+use tauri::{App, AppHandle, Emitter, Manager, Runtime};
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct TrayCommand {
@@ -16,6 +17,7 @@ fn update_tray(
     artist: String,
     is_playing: bool,
 ) -> Result<(), String> {
+    #[cfg(not(target_os = "android"))]
     if let Some(tray) = app.tray_by_id("main") {
         let tooltip = if track_name.is_empty() {
             "Resonance".to_string()
@@ -33,6 +35,7 @@ fn update_tray(
     Ok(())
 }
 
+#[cfg(not(target_os = "android"))]
 fn setup_tray<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
     let play_pause = MenuItem::with_id(app, "play_pause", "Play / Pause", true, None::<&str>)?;
     let next = MenuItem::with_id(app, "next", "Next Track", true, None::<&str>)?;
@@ -71,12 +74,11 @@ fn setup_tray<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
                     app.exit(0);
                 }
                 _ => {
-                    // Emit tray commands to frontend (play_pause, next, previous)
                     let _ = app.emit("tray:command", TrayCommand { command });
                 }
             }
         })
-        .on_tray_icon_event(|tray, event| {
+        .on_tray_icon_event(|tray, event: TrayIconEvent| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
@@ -106,6 +108,7 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .invoke_handler(tauri::generate_handler![update_tray])
         .setup(|app| {
+            #[cfg(not(target_os = "android"))]
             setup_tray(app)?;
             Ok(())
         })
