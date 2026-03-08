@@ -29,8 +29,8 @@ services:
     expose:
       - "3000"
     volumes:
-      - resonance-data:/app/backend/data
-      - resonance-uploads:/app/backend/uploads
+      - ./data:/app/backend/data
+      - ./uploads:/app/backend/uploads
     environment:
       - NODE_ENV=production
       - PORT=3000
@@ -52,10 +52,6 @@ networks:
     driver: bridge
 
 volumes:
-  resonance-data:
-    driver: local
-  resonance-uploads:
-    driver: local
   caddy-data:
     driver: local
   caddy-config:
