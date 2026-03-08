@@ -1,28 +1,38 @@
-# Caddyfile - Automatic HTTPS reverse proxy
-# Replace YOUR_DOMAIN with your actual domain (e.g., resonance.ibrahimkhaleelulla.com)
+# Caddyfile — works with Tailscale HTTPS (no public domain needed)
+# Replace YOUR_TAILSCALE_HOSTNAME with output of: tailscale cert --domain
+# e.g. your-vm.tail-xxxx.ts.net
+# OR replace with your domain if you get one later.
 
-YOUR_DOMAIN {
-    # Reverse proxy to Resonance app
+{
+    # Use Tailscale cert provisioner
+    # Remove this block if using a public domain (Caddy auto-provisions Let's Encrypt)
+}
+
+YOUR_TAILSCALE_HOSTNAME {
+    tls {
+        # Tailscale provides certs automatically for *.ts.net hostnames
+        # If this doesn't work, comment out the tls block and Caddy will use HTTP
+    }
+
+    # Reverse proxy to Resonance app container
     reverse_proxy resonance:3000
 
-    # Enable compression
+    # Compression
     encode gzip zstd
 
     # Security headers
     header {
         X-Content-Type-Options "nosniff"
         X-Frame-Options "SAMEORIGIN"
-        X-XSS-Protection "1; mode=block"
         Referrer-Policy "strict-origin-when-cross-origin"
         -Server
     }
 
-    # Handle large file uploads (for audio files)
+    # Handle large audio file uploads
     request_body {
         max_size 100MB
     }
 
-    # Logging
     log {
         output file /data/access.log {
             roll_size 10MB

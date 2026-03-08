@@ -52,6 +52,7 @@ SETUP_PLAN.md
 VPS_SETUP_PLAN.md
 CLAUDE.md
 MAIN_RELEASE_IMPLEMENTATION.md
+Latest_Convo_History.md
 metadata.json
 Summary*.md
 
@@ -59,3 +60,8 @@ Summary*.md
 Oracle_Cloud/
 *.key
 *.pem
+*.keystore
+
+# Tauri build outputs
+src-tauri/target/
+src-tauri/gen/

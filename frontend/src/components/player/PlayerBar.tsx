@@ -17,12 +17,16 @@ import {
   Radio,
   Info,
   X,
+  SlidersHorizontal,
+  CloudDownload,
 } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useAudioPlayer } from '@/hooks/useAudioPlayer';
 import { useFavoritesStore } from '@/stores/favoritesStore';
 import LyricsPanel from './LyricsPanel';
 import QueuePanel from './QueuePanel';
+import EqualizerPanel from './EqualizerPanel';
+import DownloadManager from '@/components/DownloadManager';
 
 const SLEEP_TIMER_OPTIONS = [
   { label: '5 minutes', value: 5 },
@@ -45,6 +49,8 @@ export const PlayerBar = () => {
     repeat,
     showLyrics,
     showQueue,
+    showDownloadPanel,
+    showEqualizer,
     radioMode,
     sleepTimerEnd,
     sleepTimerMinutes,
@@ -59,6 +65,8 @@ export const PlayerBar = () => {
     toggleRepeat,
     toggleLyrics,
     toggleQueue,
+    toggleDownloadPanel,
+    toggleEqualizer,
     setSleepTimer,
     checkSleepTimer,
     stopRadio,
@@ -333,6 +341,26 @@ export const PlayerBar = () => {
         </div>
 
         <button
+          onClick={toggleEqualizer}
+          aria-label={showEqualizer ? 'Hide equalizer' : 'Show equalizer'}
+          aria-expanded={showEqualizer}
+          className={`transition-colors ${
+            showEqualizer ? 'text-white' : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <SlidersHorizontal className="w-5 h-5" />
+        </button>
+        <button
+          onClick={toggleDownloadPanel}
+          aria-label={showDownloadPanel ? 'Hide downloads' : 'Show downloads'}
+          aria-expanded={showDownloadPanel}
+          className={`transition-colors ${
+            showDownloadPanel ? 'text-white' : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          <CloudDownload className="w-5 h-5" />
+        </button>
+        <button
           onClick={toggleQueue}
           aria-label={showQueue ? 'Hide queue' : 'Show queue'}
           aria-expanded={showQueue}
@@ -397,6 +425,8 @@ export const PlayerBar = () => {
       {/* Panels */}
       <LyricsPanel />
       <QueuePanel />
+      <EqualizerPanel />
+      {showDownloadPanel && <DownloadManager />}
 
       {/* Radio Info Modal */}
       {showRadioInfo && (

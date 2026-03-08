@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { usePlaylistStore } from '@/stores/playlistStore';
 import { usePlayerStore } from '@/stores/playerStore';
+import { useNetworkStore } from '@/stores/networkStore';
+import { useDownloadStore } from '@/stores/downloadStore';
 import { api } from '@/services/api';
 import { Page } from '@/types';
 
@@ -22,6 +24,8 @@ import PlayerBar from '@/components/player/PlayerBar';
 import { ToastContainer } from '@/components/ui/Toast';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import KeyboardShortcutsModal from '@/components/ui/KeyboardShortcutsModal';
+import OfflineBanner from '@/components/OfflineBanner';
+import UpdateNotification from '@/components/UpdateNotification';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 
 type AuthScreen = 'landing' | 'login' | 'signup';
@@ -36,9 +40,17 @@ const App = () => {
   const { isAuthenticated, token, checkAuth } = useAuthStore();
   const { playlists, fetchPlaylists } = usePlaylistStore();
   const { currentTrack, showLyrics, showQueue } = usePlayerStore();
+  const { startMonitoring } = useNetworkStore();
+  const { initCache } = useDownloadStore();
 
   // Enable keyboard shortcuts for player controls
   useKeyboardShortcuts({ onOpenHelp: () => setShowShortcutsModal(true) });
+
+  // Start network monitoring and cache init on mount
+  useEffect(() => {
+    startMonitoring();
+    initCache();
+  }, [startMonitoring, initCache]);
 
   // Handle splash screen
   useEffect(() => {
@@ -156,6 +168,8 @@ const App = () => {
   return (
     <ErrorBoundary>
       <div className="flex h-screen w-full bg-[#0a0a0a] text-zinc-300 select-none overflow-hidden">
+        <OfflineBanner />
+        <UpdateNotification />
         <Sidebar
           activePage={activePage}
           setActivePage={setActivePage}

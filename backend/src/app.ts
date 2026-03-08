@@ -52,7 +52,17 @@ const app = Fastify({
 
 // Register plugins
 await app.register(cors, {
-  origin: isProduction ? true : (process.env.FRONTEND_URL || 'http://localhost:5173'),
+  origin: isProduction
+    ? [
+        process.env.FRONTEND_URL || 'https://localhost',
+        'tauri://localhost',
+        'https://tauri.localhost',
+      ]
+    : [
+        process.env.FRONTEND_URL || 'http://localhost:5173',
+        'tauri://localhost',
+        'https://tauri.localhost',
+      ],
   credentials: true,
 });
 
