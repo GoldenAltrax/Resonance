@@ -1,0 +1,12 @@
+node_modules
+*/node_modules
+backend/uploads
+backend/data
+frontend/dist
+backend/dist
+.git
+.github
+src-tauri
+*.tar
+*.tar.gz
+resonance-backup*
