@@ -8,7 +8,7 @@
     # Remove this block if using a public domain (Caddy auto-provisions Let's Encrypt)
 }
 
-ubuntu-minecraft-vm.tail1d6ee2.ts.net {
+http://ubuntu-minecraft-vm.tail1d6ee2.ts.net {
     # Reverse proxy to Resonance app container
     reverse_proxy resonance:3000
 
