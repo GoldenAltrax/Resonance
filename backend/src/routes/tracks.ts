@@ -609,4 +609,61 @@ export async function trackRoutes(app: FastifyInstance) {
 
     return reply.send(updatedTrack);
   });
+
+  // Get lyrics for a track (extracted from ID3 tags)
+  app.get<{ Params: { id: string } }>('/:id/lyrics', {
+    preHandler: [authMiddleware],
+  }, async (request, reply) => {
+    const { id } = request.params;
+
+    const track = await db.query.tracks.findFirst({
+      where: eq(tracks.id, id),
+    });
+
+    if (!track) {
+      return reply.status(404).send({ error: 'Track not found' });
+    }
+
+    const filePath = resolveStoredFilePath(track.filePath);
+    if (!filePath) {
+      return reply.status(404).send({ error: 'Track file not found' });
+    }
+
+    try {
+      const metadata = await parseFile(filePath);
+      let lyrics: string | null = null;
+      let synced: { time: number; text: string }[] | null = null;
+
+      if (metadata.native) {
+        for (const format of Object.values(metadata.native)) {
+          for (const tag of format) {
+            // Unsynchronized lyrics (USLT)
+            if ((tag.id === 'USLT' || tag.id === 'LYRICS') && tag.value) {
+              const val = tag.value as { text?: string } | string;
+              lyrics = typeof val === 'string' ? val : (val.text ?? null);
+            }
+            // Synchronized lyrics (SYLT)
+            if (tag.id === 'SYLT' && tag.value) {
+              const val = tag.value as { entries?: Array<{ text: string; timestamp: number }> };
+              if (val.entries) {
+                synced = val.entries.map((e) => ({
+                  time: e.timestamp / 1000,
+                  text: e.text,
+                }));
+              }
+            }
+          }
+        }
+      }
+
+      // Also check common tags
+      if (!lyrics && metadata.common.lyrics?.length) {
+        lyrics = metadata.common.lyrics.join('\n');
+      }
+
+      return reply.send({ lyrics, synced });
+    } catch {
+      return reply.send({ lyrics: null, synced: null });
+    }
+  });
 }

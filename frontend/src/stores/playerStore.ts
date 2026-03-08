@@ -33,6 +33,17 @@ interface PlayerState {
   repeat: 'none' | 'one' | 'all';
   showLyrics: boolean;
   showQueue: boolean;
+  showDownloadPanel: boolean;
+
+  // Crossfade
+  crossfadeEnabled: boolean;
+  crossfadeDuration: number; // seconds (0–12)
+
+  // Equalizer
+  eqEnabled: boolean;
+  eqGains: number[]; // 10 bands: 32,64,125,250,500,1k,2k,4k,8k,16k Hz — each -12 to +12 dB
+  eqPreset: string; // e.g. 'Flat', 'Bass Boost', ...
+  showEqualizer: boolean;
 
   // Radio mode - auto-queue similar tracks
   radioMode: boolean;
@@ -61,6 +72,12 @@ interface PlayerState {
   toggleRepeat: () => void;
   toggleLyrics: () => void;
   toggleQueue: () => void;
+  toggleDownloadPanel: () => void;
+  setCrossfade: (enabled: boolean, duration?: number) => void;
+  setEqGain: (bandIndex: number, gain: number) => void;
+  setEqPreset: (preset: string, gains: number[]) => void;
+  toggleEq: () => void;
+  toggleEqualizer: () => void;
   addToQueue: (tracks: Track[]) => void;
   playNext: (track: Track) => void;
   removeFromQueue: (index: number) => void;
@@ -88,6 +105,13 @@ export const usePlayerStore = create<PlayerState>()(
       repeat: 'none',
       showLyrics: false,
       showQueue: false,
+      showDownloadPanel: false,
+      crossfadeEnabled: false,
+      crossfadeDuration: 3,
+      eqEnabled: false,
+      eqGains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      eqPreset: 'Flat',
+      showEqualizer: false,
       radioMode: false,
       radioSourceTrackId: null,
       sleepTimerEnd: null,
@@ -247,6 +271,27 @@ export const usePlayerStore = create<PlayerState>()(
 
       toggleQueue: () => set((state) => ({ showQueue: !state.showQueue, showLyrics: false })),
 
+      toggleDownloadPanel: () => set((state) => ({ showDownloadPanel: !state.showDownloadPanel })),
+
+      setCrossfade: (enabled, duration) =>
+        set((state) => ({
+          crossfadeEnabled: enabled,
+          crossfadeDuration: duration ?? state.crossfadeDuration,
+        })),
+
+      setEqGain: (bandIndex, gain) =>
+        set((state) => {
+          const eqGains = [...state.eqGains];
+          eqGains[bandIndex] = gain;
+          return { eqGains };
+        }),
+
+      setEqPreset: (preset, gains) => set({ eqPreset: preset, eqGains: gains }),
+
+      toggleEq: () => set((state) => ({ eqEnabled: !state.eqEnabled })),
+
+      toggleEqualizer: () => set((state) => ({ showEqualizer: !state.showEqualizer })),
+
       toggleRepeat: () =>
         set((state) => ({
           repeat:
@@ -364,6 +409,11 @@ export const usePlayerStore = create<PlayerState>()(
         isMuted: state.isMuted,
         shuffle: state.shuffle,
         repeat: state.repeat,
+        crossfadeEnabled: state.crossfadeEnabled,
+        crossfadeDuration: state.crossfadeDuration,
+        eqEnabled: state.eqEnabled,
+        eqGains: state.eqGains,
+        eqPreset: state.eqPreset,
       }),
     }
   )
