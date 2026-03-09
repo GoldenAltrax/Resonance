@@ -2,9 +2,9 @@
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    App, Runtime,
+    App, Emitter, Manager, Runtime,
 };
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::AppHandle;
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct TrayCommand {
@@ -19,19 +19,22 @@ fn update_tray(
     is_playing: bool,
 ) -> Result<(), String> {
     #[cfg(not(target_os = "android"))]
-    if let Some(tray) = app.tray_by_id("main") {
-        let tooltip = if track_name.is_empty() {
-            "Resonance".to_string()
-        } else {
-            format!(
-                "{} — {}\n{}",
-                track_name,
-                artist,
-                if is_playing { "▶ Playing" } else { "⏸ Paused" }
-            )
-        };
-        tray.set_tooltip(Some(&tooltip))
-            .map_err(|e| e.to_string())?;
+    {
+        use tauri::Manager;
+        if let Some(tray) = app.tray_by_id("main") {
+            let tooltip = if track_name.is_empty() {
+                "Resonance".to_string()
+            } else {
+                format!(
+                    "{} — {}\n{}",
+                    track_name,
+                    artist,
+                    if is_playing { "▶ Playing" } else { "⏸ Paused" }
+                )
+            };
+            tray.set_tooltip(Some(&tooltip))
+                .map_err(|e| e.to_string())?;
+        }
     }
     #[cfg(target_os = "android")]
     let _ = (app, track_name, artist, is_playing);
@@ -100,6 +103,7 @@ fn setup_tray<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
@@ -115,9 +119,9 @@ pub fn run() {
 
     builder
         .invoke_handler(tauri::generate_handler![update_tray])
-        .setup(|app| {
+        .setup(|_app| {
             #[cfg(not(target_os = "android"))]
-            setup_tray(app)?;
+            setup_tray(_app)?;
             Ok(())
         })
         .run(tauri::generate_context!())
