@@ -6,8 +6,30 @@ on:
       - 'v*.*.*'
 
 jobs:
+  create-release:
+    name: Create GitHub Release
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      release-id: ${{ steps.create-release.outputs.releaseId }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release
+        id: create-release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Resonance ${{ github.ref_name }}'
+          releaseBody: 'See CHANGELOG.md for details.'
+          releaseDraft: true
+          prerelease: false
+
   release:
     name: Build & Release (${{ matrix.platform }})
+    needs: create-release
     permissions:
       contents: write
     strategy:
@@ -32,7 +54,6 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          # macOS universal binary needs both targets
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Install frontend dependencies
@@ -46,11 +67,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Resonance ${{ github.ref_name }}'
-          releaseBody: 'See CHANGELOG.md for details.'
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release-id }}
           args: ${{ matrix.args }}
 
   android:
