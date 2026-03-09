@@ -14,18 +14,16 @@ jobs:
     outputs:
       release-id: ${{ steps.create.outputs.id }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Create draft release
+      - name: Create draft release via API
         id: create
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "Resonance ${{ github.ref_name }}" \
-            --notes "See CHANGELOG.md for details." \
-            --draft
-          RELEASE_ID=$(gh api repos/${{ github.repository }}/releases/tags/${{ github.ref_name }} --jq '.id')
-          echo "id=$RELEASE_ID" >> $GITHUB_OUTPUT
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases" \
+            -d "{\"tag_name\":\"${{ github.ref_name }}\",\"name\":\"Resonance ${{ github.ref_name }}\",\"body\":\"See CHANGELOG.md for details.\",\"draft\":true}")
+          ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "id=$ID" >> $GITHUB_OUTPUT
 
   release:
     name: Build & Release (${{ matrix.platform }})
@@ -40,9 +38,7 @@ jobs:
             args: --target universal-apple-darwin
           - platform: windows-latest
             args: ''
-
     runs-on: ${{ matrix.platform }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -73,7 +69,6 @@ jobs:
   android:
     name: Build Android APK
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
