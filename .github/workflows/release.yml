@@ -12,20 +12,20 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     outputs:
-      release-id: ${{ steps.create-release.outputs.releaseId }}
+      release-id: ${{ steps.create.outputs.id }}
     steps:
       - uses: actions/checkout@v4
-      - name: Create release
-        id: create-release
-        uses: tauri-apps/tauri-action@v0
+      - name: Create draft release
+        id: create
+        run: |
+          RELEASE=$(gh release create "${{ github.ref_name }}" \
+            --title "Resonance ${{ github.ref_name }}" \
+            --notes "See CHANGELOG.md for details." \
+            --draft \
+            --json id -q '.id')
+          echo "id=$RELEASE" >> $GITHUB_OUTPUT
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Resonance ${{ github.ref_name }}'
-          releaseBody: 'See CHANGELOG.md for details.'
-          releaseDraft: true
-          prerelease: false
 
   release:
     name: Build & Release (${{ matrix.platform }})
