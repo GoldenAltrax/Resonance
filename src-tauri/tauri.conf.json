@@ -1,7 +1,7 @@
 {
   "identifier": "com.ibrahim.resonance",
   "productName": "Resonance",
-  "version": "4.0.12",
+  "version": "4.0.13",
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:5173",

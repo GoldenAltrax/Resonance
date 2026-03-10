@@ -319,7 +319,7 @@ const LibraryView = () => {
     if (currentTrack?.id === track.id && isPlaying) {
       pause();
     } else {
-      play(track, library);
+      play(track, filteredTracks);
     }
   };
 
