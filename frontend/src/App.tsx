@@ -27,6 +27,9 @@ import KeyboardShortcutsModal from '@/components/ui/KeyboardShortcutsModal';
 import OfflineBanner from '@/components/OfflineBanner';
 import UpdateNotification from '@/components/UpdateNotification';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { usePlatform } from '@/hooks/usePlatform';
+import BottomNav from '@/components/android/BottomNav';
+import MobilePlayerBar from '@/components/android/MobilePlayerBar';
 
 type AuthScreen = 'landing' | 'login' | 'signup';
 
@@ -42,6 +45,7 @@ const App = () => {
   const { currentTrack, showLyrics, showQueue } = usePlayerStore();
   const { startMonitoring } = useNetworkStore();
   const { initCache } = useDownloadStore();
+  const { isAndroid } = usePlatform();
 
   // Enable keyboard shortcuts for player controls
   useKeyboardShortcuts({ onOpenHelp: () => setShowShortcutsModal(true) });
@@ -164,6 +168,34 @@ const App = () => {
     image: p.coverImage || `https://picsum.photos/seed/${p.id}/400/400`,
     songs: [],
   }));
+
+  if (isAndroid) {
+    return (
+      <ErrorBoundary>
+        <div className="flex flex-col h-screen w-full bg-[#0a0a0a] text-zinc-300 select-none overflow-hidden">
+          <OfflineBanner />
+          <main
+            className="flex-1 overflow-y-auto relative"
+            style={{
+              paddingBottom: currentTrack
+                ? 'calc(72px + 56px + env(safe-area-inset-bottom))'
+                : 'calc(56px + env(safe-area-inset-bottom))',
+            }}
+          >
+            <div className="absolute inset-0 bg-gradient-to-b from-[#1a1a1a]/20 to-[#0a0a0a] pointer-events-none" />
+            <div className="relative z-10 p-4 pb-4">
+              <ErrorBoundary>
+                {renderContent()}
+              </ErrorBoundary>
+            </div>
+          </main>
+          <MobilePlayerBar />
+          <BottomNav activePage={activePage} onNavigate={setActivePage} />
+          <ToastContainer />
+        </div>
+      </ErrorBoundary>
+    );
+  }
 
   return (
     <ErrorBoundary>
