@@ -22,6 +22,7 @@ export function useAudioPlayer() {
   const eqNodesRef = useRef<BiquadFilterNode[]>([]);
   const crossfadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pipelineInitialized = useRef(false);
+  const loadGenerationRef = useRef(0); // Incremented on every track change to cancel stale fetches
 
   // Latest-ref pattern: keep a ref in sync with the latest store values
   // so event handlers (set up once) always read fresh values without being
@@ -334,6 +335,11 @@ export function useAudioPlayer() {
     const audio = audioRef.current;
     if (!audio || !currentTrack) return;
 
+    // Each track change gets a unique generation ID.
+    // Stale async fetches that resolve after a newer track was requested
+    // will see their generation no longer matches and discard their result.
+    const generation = ++loadGenerationRef.current;
+
     // Reset crossfade state on track change
     crossfadeTimeoutRef.current = null;
     if (gainNodeRef.current) {
@@ -348,6 +354,11 @@ export function useAudioPlayer() {
     }
 
     const loadAndPlay = (blobUrl: string) => {
+      // Discard if a newer track request has already been made
+      if (loadGenerationRef.current !== generation) {
+        api.revokeStreamUrl(blobUrl);
+        return;
+      }
       if (!audioRef.current) {
         api.revokeStreamUrl(blobUrl);
         return;
@@ -376,16 +387,7 @@ export function useAudioPlayer() {
     } else {
       api
         .getSecureStreamUrl(currentTrack.id)
-        .then((blobUrl) => {
-          if (audioRef.current && currentTrack) {
-            if (currentBlobUrl.current && currentBlobUrl.current !== blobUrl) {
-              api.revokeStreamUrl(currentBlobUrl.current);
-            }
-            loadAndPlay(blobUrl);
-          } else {
-            api.revokeStreamUrl(blobUrl);
-          }
-        })
+        .then((blobUrl) => loadAndPlay(blobUrl))
         .catch((err) => console.error('Failed to load audio:', err));
     }
 
