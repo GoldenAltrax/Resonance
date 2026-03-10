@@ -102,23 +102,14 @@ jobs:
         env:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
 
-      - name: Decode keystore
-        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > $HOME/resonance.keystore
-
-      - name: Build Android
-        run: cargo tauri android build
+      - name: Build Android (debug — no signing required for sideloading)
+        run: cargo tauri android build --debug
         env:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
-          ANDROID_SIGNING_KEY: $HOME/resonance.keystore
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: resonance-android-${{ github.ref_name }}
-          path: |
-            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
-            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+          path: src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
           if-no-files-found: warn
