@@ -57,11 +57,13 @@ await app.register(cors, {
         process.env.FRONTEND_URL || 'https://localhost',
         'tauri://localhost',
         'https://tauri.localhost',
+        'http://tauri.localhost',
       ]
     : [
         process.env.FRONTEND_URL || 'http://localhost:5173',
         'tauri://localhost',
         'https://tauri.localhost',
+        'http://tauri.localhost',
       ],
   credentials: true,
 });
