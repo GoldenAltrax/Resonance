@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { usePlayerStore } from '@/stores/playerStore';
-import { api } from '@/services/api';
+import { Track, api } from '@/services/api';
 import { isTauri } from '@/utils/tauri';
 
 // Preload threshold (percentage of track completion)
@@ -21,6 +21,22 @@ export function useAudioPlayer() {
   const gainNodeRef = useRef<GainNode | null>(null);
   const eqNodesRef = useRef<BiquadFilterNode[]>([]);
   const crossfadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pipelineInitialized = useRef(false);
+
+  // Latest-ref pattern: keep a ref in sync with the latest store values
+  // so event handlers (set up once) always read fresh values without being
+  // listed as useEffect deps (which would cause re-runs on every state change).
+  const latestRef = useRef({
+    repeat: 'none' as 'none' | 'one' | 'all',
+    queue: [] as Track[],
+    queueIndex: 0,
+    shuffle: false,
+    crossfadeEnabled: false,
+    crossfadeDuration: 3,
+    volume: 0.7,
+    eqEnabled: false,
+    eqGains: Array(10).fill(0) as number[],
+  });
 
   const {
     currentTrack,
@@ -37,9 +53,22 @@ export function useAudioPlayer() {
     setAudioElement,
     setProgress,
     setDuration,
-    next,
-    pause,
   } = usePlayerStore();
+
+  // Keep latestRef in sync on every render (no dep array — always runs)
+  useEffect(() => {
+    latestRef.current = {
+      repeat,
+      queue,
+      queueIndex,
+      shuffle,
+      crossfadeEnabled,
+      crossfadeDuration,
+      volume,
+      eqEnabled,
+      eqGains,
+    };
+  });
 
   // Initialize or get AudioContext
   const getAudioCtx = useCallback((): AudioContext => {
@@ -49,25 +78,25 @@ export function useAudioPlayer() {
     return audioCtxRef.current;
   }, []);
 
-  // Build the Web Audio pipeline for a given audio element
-  const buildAudioPipeline = useCallback(
-    (audio: HTMLAudioElement): { gainNode: GainNode; eqNodes: BiquadFilterNode[] } => {
+  // Build the Web Audio pipeline ONCE for the main audio element.
+  // MediaElementAudioSourceNode can only be created once per audio element —
+  // subsequent track changes just update audio.src, the pipeline stays connected.
+  const initAudioPipeline = useCallback(
+    (audio: HTMLAudioElement) => {
+      if (pipelineInitialized.current) return;
+      pipelineInitialized.current = true;
+
       const ctx = getAudioCtx();
-
-      // Disconnect old source if it exists for this audio element
-      try {
-        sourceNodeRef.current?.disconnect();
-      } catch {}
-
       const source = ctx.createMediaElementSource(audio);
       sourceNodeRef.current = source;
 
-      // Create main gain node
+      // Gain node controls volume (audio.volume is bypassed by Web Audio API)
       const gain = ctx.createGain();
-      gain.gain.value = 1;
+      gain.gain.value = latestRef.current.volume;
       gainNodeRef.current = gain;
 
-      // Create 10-band EQ
+      // 10-band EQ
+      const { eqEnabled, eqGains } = latestRef.current;
       const eqNodes: BiquadFilterNode[] = EQ_FREQUENCIES.map((freq, i) => {
         const filter = ctx.createBiquadFilter();
         filter.type = 'peaking';
@@ -78,7 +107,7 @@ export function useAudioPlayer() {
       });
       eqNodesRef.current = eqNodes;
 
-      // Chain: source → gain → eq[0] → eq[1] → ... → eq[9] → destination
+      // Chain: source → gainNode → eq[0] → ... → eq[9] → destination
       source.connect(gain);
       let node: AudioNode = gain;
       for (const eq of eqNodes) {
@@ -86,20 +115,29 @@ export function useAudioPlayer() {
         node = eq;
       }
       node.connect(ctx.destination);
-
-      return { gainNode: gain, eqNodes };
     },
-    [getAudioCtx, eqEnabled, eqGains]
+    [getAudioCtx]
   );
 
-  // Update EQ gain values when settings change
+  // Update EQ gains when settings change
   useEffect(() => {
     eqNodesRef.current.forEach((node, i) => {
       node.gain.value = eqEnabled ? (eqGains[i] ?? 0) : 0;
     });
   }, [eqEnabled, eqGains]);
 
-  // Register Tauri tray event listeners + global media shortcuts
+  // Volume: must go through GainNode once the Web Audio pipeline is active.
+  // audio.volume is bypassed by Web Audio API after createMediaElementSource().
+  useEffect(() => {
+    if (gainNodeRef.current) {
+      // Don't override a crossfade in progress
+      if (!crossfadeTimeoutRef.current) {
+        gainNodeRef.current.gain.value = volume;
+      }
+    }
+  }, [volume]);
+
+  // Register Tauri tray event listeners + global media shortcuts (runs once)
   useEffect(() => {
     if (!isTauri()) return;
 
@@ -147,7 +185,7 @@ export function useAudioPlayer() {
     };
   }, []);
 
-  // Update tray tooltip when track changes (Tauri only)
+  // Update tray tooltip when track or play state changes
   useEffect(() => {
     if (!isTauri() || !currentTrack) return;
     import('@tauri-apps/api/core')
@@ -161,31 +199,24 @@ export function useAudioPlayer() {
       .catch(() => {});
   }, [currentTrack, isPlaying]);
 
-  // Initialize audio element
+  // Initialize audio element and attach event listeners — runs ONCE.
+  // Stable deps only: callbacks from store that never change identity.
   useEffect(() => {
-    if (!audioRef.current) {
-      audioRef.current = new Audio();
-      audioRef.current.volume = volume;
-      setAudioElement(audioRef.current);
-    }
+    const audio = new Audio();
+    audioRef.current = audio;
+    setAudioElement(audio);
 
-    const audio = audioRef.current;
+    const preload = new Audio();
+    preload.preload = 'auto';
+    preloadRef.current = preload;
 
-    // Initialize preload audio element
-    if (!preloadRef.current) {
-      preloadRef.current = new Audio();
-      preloadRef.current.preload = 'auto';
-      preloadRef.current.volume = 0; // Silent preload
-    }
+    // ---- Event handlers — read from latestRef to avoid stale closures ----
 
-    // Event handlers
     const handleTimeUpdate = () => {
       setProgress(audio.currentTime);
-
-      // Check sleep timer
       usePlayerStore.getState().checkSleepTimer();
 
-      // Crossfade trigger
+      const { crossfadeEnabled, crossfadeDuration } = latestRef.current;
       if (crossfadeEnabled && crossfadeDuration > 0 && audio.duration) {
         const timeLeft = audio.duration - audio.currentTime;
         if (timeLeft <= crossfadeDuration && timeLeft > 0 && !crossfadeTimeoutRef.current) {
@@ -193,7 +224,6 @@ export function useAudioPlayer() {
         }
       }
 
-      // Check if we should preload the next track
       if (audio.duration && audio.currentTime / audio.duration >= PRELOAD_THRESHOLD) {
         preloadNextTrack();
       }
@@ -201,50 +231,39 @@ export function useAudioPlayer() {
 
     const startCrossfade = (timeLeft: number) => {
       if (crossfadeTimeoutRef.current) return;
-      // Mark so we don't start it again
       crossfadeTimeoutRef.current = setTimeout(() => {}, 0);
 
       const ctx = getAudioCtx();
       if (!gainNodeRef.current) return;
 
+      const { volume } = latestRef.current;
       const now = ctx.currentTime;
-      // Fade out current
-      gainNodeRef.current.gain.setValueAtTime(1, now);
+      gainNodeRef.current.gain.setValueAtTime(volume, now);
       gainNodeRef.current.gain.linearRampToValueAtTime(0, now + timeLeft);
 
-      // Advance to next track immediately so it starts loading
       usePlayerStore.getState().next();
     };
 
-    // Preload the next track in queue
     const preloadNextTrack = () => {
-      if (!preloadRef.current || queue.length === 0) return;
+      if (!preloadRef.current) return;
+      const { queue, queueIndex, shuffle, repeat } = latestRef.current;
+      if (queue.length === 0) return;
+      if (shuffle) return;
 
-      let nextIndex: number;
-      if (shuffle) {
-        return;
-      } else {
-        nextIndex = queueIndex + 1;
-        if (nextIndex >= queue.length) {
-          if (repeat === 'all') {
-            nextIndex = 0;
-          } else {
-            return;
-          }
-        }
+      let nextIndex = queueIndex + 1;
+      if (nextIndex >= queue.length) {
+        if (repeat === 'all') nextIndex = 0;
+        else return;
       }
 
       const nextTrack = queue[nextIndex];
-      if (!nextTrack || preloadedTrackId.current === nextTrack.id) {
-        return;
-      }
+      if (!nextTrack || preloadedTrackId.current === nextTrack.id) return;
 
-      api.getSecureStreamUrl(nextTrack.id)
+      api
+        .getSecureStreamUrl(nextTrack.id)
         .then((blobUrl) => {
           if (preloadRef.current && preloadedTrackId.current !== nextTrack.id) {
-            if (preloadedBlobUrl.current) {
-              api.revokeStreamUrl(preloadedBlobUrl.current);
-            }
+            if (preloadedBlobUrl.current) api.revokeStreamUrl(preloadedBlobUrl.current);
             preloadRef.current.src = blobUrl;
             preloadRef.current.load();
             preloadedTrackId.current = nextTrack.id;
@@ -253,33 +272,30 @@ export function useAudioPlayer() {
             api.revokeStreamUrl(blobUrl);
           }
         })
-        .catch((err) => {
-          console.warn('Failed to preload next track:', err);
-        });
+        .catch((err) => console.warn('Failed to preload next track:', err));
     };
 
-    const handleLoadedMetadata = () => {
-      setDuration(audio.duration);
-    };
+    const handleLoadedMetadata = () => setDuration(audio.duration);
 
     const handleEnded = () => {
-      // Reset crossfade state
       crossfadeTimeoutRef.current = null;
       if (gainNodeRef.current) {
-        gainNodeRef.current.gain.setValueAtTime(1, getAudioCtx().currentTime);
+        const { volume } = latestRef.current;
+        gainNodeRef.current.gain.setValueAtTime(volume, getAudioCtx().currentTime);
       }
 
+      const { repeat } = latestRef.current;
       if (repeat === 'one') {
         audio.currentTime = 0;
         audio.play();
       } else {
-        next();
+        usePlayerStore.getState().next();
       }
     };
 
     const handleError = (e: Event) => {
       console.error('Audio error:', e);
-      pause();
+      usePlayerStore.getState().pause();
     };
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
@@ -292,6 +308,8 @@ export function useAudioPlayer() {
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('error', handleError);
+      audio.src = '';
+      audioRef.current = null;
       if (currentBlobUrl.current) {
         api.revokeStreamUrl(currentBlobUrl.current);
         currentBlobUrl.current = null;
@@ -309,23 +327,9 @@ export function useAudioPlayer() {
         crossfadeTimeoutRef.current = null;
       }
     };
-  }, [
-    repeat,
-    next,
-    pause,
-    setAudioElement,
-    setProgress,
-    setDuration,
-    volume,
-    queue,
-    queueIndex,
-    shuffle,
-    crossfadeEnabled,
-    crossfadeDuration,
-    getAudioCtx,
-  ]);
+  }, [setAudioElement, setProgress, setDuration, getAudioCtx]); // stable deps only
 
-  // Handle track changes
+  // Handle track changes — load new audio src, init pipeline on first track
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !currentTrack) return;
@@ -335,10 +339,9 @@ export function useAudioPlayer() {
     if (gainNodeRef.current) {
       const ctx = getAudioCtx();
       gainNodeRef.current.gain.cancelScheduledValues(ctx.currentTime);
-      gainNodeRef.current.gain.setValueAtTime(1, ctx.currentTime);
+      gainNodeRef.current.gain.setValueAtTime(latestRef.current.volume, ctx.currentTime);
     }
 
-    // Revoke old blob URL
     if (currentBlobUrl.current) {
       api.revokeStreamUrl(currentBlobUrl.current);
       currentBlobUrl.current = null;
@@ -353,8 +356,8 @@ export function useAudioPlayer() {
       currentBlobUrl.current = blobUrl;
       audioRef.current.load();
 
-      // Build Web Audio pipeline (reconnects source node after src change)
-      buildAudioPipeline(audioRef.current);
+      // Initialize pipeline once — subsequent calls are no-ops
+      initAudioPipeline(audioRef.current);
 
       if (usePlayerStore.getState().isPlaying) {
         const ctx = getAudioCtx();
@@ -365,14 +368,14 @@ export function useAudioPlayer() {
       }
     };
 
-    // Check if this track was preloaded
     if (preloadedTrackId.current === currentTrack.id && preloadedBlobUrl.current) {
       const blobUrl = preloadedBlobUrl.current;
       preloadedBlobUrl.current = null;
       preloadedTrackId.current = null;
       loadAndPlay(blobUrl);
     } else {
-      api.getSecureStreamUrl(currentTrack.id)
+      api
+        .getSecureStreamUrl(currentTrack.id)
         .then((blobUrl) => {
           if (audioRef.current && currentTrack) {
             if (currentBlobUrl.current && currentBlobUrl.current !== blobUrl) {
@@ -383,15 +386,13 @@ export function useAudioPlayer() {
             api.revokeStreamUrl(blobUrl);
           }
         })
-        .catch((err) => {
-          console.error('Failed to load audio:', err);
-        });
+        .catch((err) => console.error('Failed to load audio:', err));
     }
 
     if (preloadedTrackId.current === currentTrack.id) {
       preloadedTrackId.current = null;
     }
-  }, [currentTrack, buildAudioPipeline, getAudioCtx]);
+  }, [currentTrack, initAudioPipeline, getAudioCtx]);
 
   // Handle play/pause state changes
   useEffect(() => {
@@ -408,14 +409,6 @@ export function useAudioPlayer() {
       audio.pause();
     }
   }, [isPlaying, currentTrack]);
-
-  // Handle volume changes
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (audio) {
-      audio.volume = volume;
-    }
-  }, [volume]);
 
   // Utility functions
   const formatTime = useCallback((seconds: number): string => {
