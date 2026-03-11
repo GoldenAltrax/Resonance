@@ -1,6 +1,9 @@
 // Use environment variable for API URL, fallback to relative path for dev proxy
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
+// Detect Tauri environment synchronously (no async needed here)
+const _isTauri = () => '__TAURI_INTERNALS__' in window;
+
 interface ApiError {
   error: string;
   details?: unknown;
@@ -184,10 +187,19 @@ class ApiClient {
     });
   }
 
-  // Create an authenticated blob URL for audio streaming (avoids exposing token in URL)
+  // Returns an audio-playable URL for a track.
+  // In Tauri: returns a stream:// custom-protocol URL — Rust proxies it to the
+  //   backend over HTTP (bypasses ATS/WKWebView restrictions, supports Range).
+  // In browser: fetches the audio as a blob and returns a blob: URL.
   async getSecureStreamUrl(id: string): Promise<string> {
     if (!this.token) {
       throw new Error('Not authenticated');
+    }
+
+    if (_isTauri()) {
+      // stream://<dummy-host>/<trackId>?token=<jwt>
+      // JWT tokens are Base64URL — no percent-encoding needed.
+      return `stream://audio/${id}?token=${this.token}`;
     }
 
     const response = await fetch(`${API_URL}/tracks/${id}/stream`, {
@@ -207,7 +219,7 @@ class ApiClient {
     return URL.createObjectURL(blob);
   }
 
-  // Revoke a blob URL to free memory
+  // Revoke a blob URL to free memory (no-op for stream:// URLs)
   revokeStreamUrl(url: string) {
     if (url.startsWith('blob:')) {
       URL.revokeObjectURL(url);

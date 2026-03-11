@@ -266,15 +266,15 @@ export async function playlistRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: 'Playlist not found' });
       }
 
-      // Update positions using batch SQL CASE statement (eliminates N+1 queries)
+      // Update positions using a parameterized batch CASE statement (eliminates N+1 queries).
+      // All trackIds are validated as UUIDs by Zod above, so values are safe to interpolate
+      // via the sql`` template tag which passes them as bound parameters.
       if (body.trackIds.length > 0) {
-        const cases = body.trackIds
-          .map((trackId, i) => `WHEN '${trackId}' THEN ${i + 1}`)
-          .join(' ');
+        const caseWhenClauses = body.trackIds.map((trackId, i) => sql`WHEN ${trackId} THEN ${i + 1}`);
 
         await db.run(sql`
           UPDATE playlist_tracks
-          SET position = CASE track_id ${sql.raw(cases)} END
+          SET position = CASE track_id ${sql.join(caseWhenClauses, sql` `)} END
           WHERE playlist_id = ${id}
           AND track_id IN (${sql.join(body.trackIds.map(tid => sql`${tid}`), sql`, `)})
         `);

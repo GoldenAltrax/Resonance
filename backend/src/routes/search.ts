@@ -17,7 +17,8 @@ export async function searchRoutes(app: FastifyInstance) {
     }
 
     const searchTerm = `%${q.trim().toLowerCase()}%`;
-    const limit = Math.min(parseInt(limitStr || '20', 10), 50);
+    const parsedLimit = parseInt(limitStr || '20', 10);
+    const limit = Math.min(isNaN(parsedLimit) ? 20 : parsedLimit, 50);
     const searchType = type || 'all'; // 'all', 'tracks', 'playlists'
 
     const results: {
@@ -68,8 +69,10 @@ export async function searchRoutes(app: FastifyInstance) {
   app.get('/tracks', async (request: FastifyRequest<{ Querystring: { limit?: string; offset?: string } }>, reply: FastifyReply) => {
     const { limit: limitStr, offset: offsetStr } = request.query;
 
-    const limit = Math.min(parseInt(limitStr || '50', 10), 100);
-    const offset = parseInt(offsetStr || '0', 10);
+    const rawLimit = parseInt(limitStr || '50', 10);
+    const limit = Math.min(isNaN(rawLimit) ? 50 : rawLimit, 100);
+    const parsedOffset = parseInt(offsetStr || '0', 10);
+    const offset = isNaN(parsedOffset) ? 0 : parsedOffset;
 
     const allTracks = await db
       .select()

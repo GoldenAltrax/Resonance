@@ -5,6 +5,114 @@ use tauri::{
     App, Emitter, Manager, Runtime,
 };
 use tauri::AppHandle;
+use tauri::http::{Request, Response, StatusCode};
+
+// Proxy an audio stream request to the backend.
+// The WebView uses stream://<host>/<trackId>?token=<jwt> as audio.src.
+// Tauri intercepts it here, fetches from the real backend over HTTP (no ATS
+// restrictions apply to Rust), forwards Range headers, and returns the bytes.
+async fn proxy_stream(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
+    let track_id = request.uri().path().trim_start_matches('/').to_string();
+
+    let token = request
+        .uri()
+        .query()
+        .unwrap_or("")
+        .split('&')
+        .find_map(|part| {
+            let mut kv = part.splitn(2, '=');
+            if kv.next() == Some("token") {
+                kv.next().map(|v| v.to_string())
+            } else {
+                None
+            }
+        });
+
+    let token = match token {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            return Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(b"Missing token".to_vec())
+                .unwrap()
+        }
+    };
+
+    if track_id.is_empty() {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(b"Missing track ID".to_vec())
+            .unwrap();
+    }
+
+    // API base URL is embedded at build time via VITE_API_URL env variable.
+    let api_base = option_env!("VITE_API_URL").unwrap_or("http://localhost:3000/api");
+    let stream_url = format!("{}/tracks/{}/stream", api_base, track_id);
+
+    let client = match reqwest::Client::builder().build() {
+        Ok(c) => c,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(e.to_string().into_bytes())
+                .unwrap()
+        }
+    };
+
+    let mut req_builder = client
+        .get(&stream_url)
+        .header("Authorization", format!("Bearer {}", token));
+
+    // Forward Range header so seeking works correctly.
+    if let Some(range) = request.headers().get("range") {
+        req_builder = req_builder.header("range", range.as_bytes());
+    }
+
+    match req_builder.send().await {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let content_type = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("audio/mpeg")
+                .to_string();
+            let content_range = resp
+                .headers()
+                .get("content-range")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let content_length = resp
+                .headers()
+                .get("content-length")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+
+            let body = resp.bytes().await.unwrap_or_default().to_vec();
+
+            let mut builder = Response::builder()
+                .status(status)
+                .header("content-type", content_type)
+                .header("accept-ranges", "bytes")
+                .header("access-control-allow-origin", "*");
+
+            if let Some(cr) = content_range {
+                builder = builder.header("content-range", cr);
+            }
+            if let Some(cl) = content_length {
+                builder = builder.header("content-length", cl);
+            }
+
+            builder.body(body).unwrap_or_else(|_| {
+                Response::builder().status(500).body(vec![]).unwrap()
+            })
+        }
+        Err(e) => Response::builder()
+            .status(StatusCode::BAD_GATEWAY)
+            .body(e.to_string().into_bytes())
+            .unwrap(),
+    }
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct TrayCommand {
@@ -106,6 +214,11 @@ fn setup_tray<R: Runtime>(app: &App<R>) -> tauri::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
+        .register_asynchronous_uri_scheme_protocol("stream", |_app, request, responder| {
+            tauri::async_runtime::spawn(async move {
+                responder.respond(proxy_stream(request).await);
+            });
+        })
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())

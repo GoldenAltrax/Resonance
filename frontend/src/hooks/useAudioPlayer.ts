@@ -7,6 +7,7 @@ const EQ_FREQUENCIES = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 
 export function useAudioPlayer() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const currentBlobUrl = useRef<string | null>(null);
 
   // Web Audio API nodes
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -15,9 +16,11 @@ export function useAudioPlayer() {
   const eqNodesRef = useRef<BiquadFilterNode[]>([]);
   const crossfadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pipelineInitialized = useRef(false);
+  // Incremented on every track change — stale fetches check this and discard
+  const loadGenerationRef = useRef(0);
 
-  // Latest-ref pattern: event handlers read from this ref so they always
-  // have fresh values without causing the setup useEffect to re-run.
+  // Latest-ref: event handlers read from here to avoid stale closures
+  // without causing the setup useEffect to re-run.
   const latestRef = useRef({
     repeat: 'none' as 'none' | 'one' | 'all',
     queue: [] as Track[],
@@ -69,8 +72,8 @@ export function useAudioPlayer() {
     return audioCtxRef.current;
   }, []);
 
-  // Initialize the Web Audio pipeline ONCE — just connects the audio element
-  // into the gain + EQ graph. Subsequent track changes only update audio.src.
+  // Initialize the Web Audio pipeline ONCE per audio element.
+  // Falls back gracefully if Web Audio API is unavailable (some Android WebViews).
   const initAudioPipeline = useCallback(
     (audio: HTMLAudioElement) => {
       if (pipelineInitialized.current) return;
@@ -104,34 +107,30 @@ export function useAudioPlayer() {
         }
         node.connect(ctx.destination);
       } catch (err) {
-        // Web Audio API not available (some Android WebViews) — fall back to
-        // plain audio.volume for volume control
-        console.warn('Web Audio API pipeline failed, using fallback:', err);
-        pipelineInitialized.current = true; // don't retry
+        // Web Audio API unavailable — volume falls back to audio.volume
+        console.warn('Web Audio API pipeline unavailable, using fallback:', err);
       }
     },
     [getAudioCtx]
   );
 
-  // EQ gains
+  // EQ gain updates
   useEffect(() => {
     eqNodesRef.current.forEach((node, i) => {
       node.gain.value = eqEnabled ? (eqGains[i] ?? 0) : 0;
     });
   }, [eqEnabled, eqGains]);
 
-  // Volume — via GainNode if pipeline is up, otherwise directly on audio element
+  // Volume — GainNode when pipeline is active, audio.volume as fallback
   useEffect(() => {
     if (gainNodeRef.current && !crossfadeTimeoutRef.current) {
       gainNodeRef.current.gain.value = volume;
-    }
-    // Fallback for when Web Audio pipeline isn't active
-    if (audioRef.current && !sourceNodeRef.current) {
+    } else if (audioRef.current && !sourceNodeRef.current) {
       audioRef.current.volume = volume;
     }
   }, [volume]);
 
-  // Tauri tray + global shortcuts
+  // Tauri tray + global media shortcuts
   useEffect(() => {
     if (!isTauri()) return;
     let unlistenTray: (() => void) | null = null;
@@ -190,7 +189,7 @@ export function useAudioPlayer() {
       .catch(() => {});
   }, [currentTrack, isPlaying]);
 
-  // Initialize audio element — runs ONCE
+  // Initialize audio element — runs ONCE with stable deps
   useEffect(() => {
     const audio = new Audio();
     audioRef.current = audio;
@@ -257,6 +256,10 @@ export function useAudioPlayer() {
       audio.removeEventListener('error', handleError);
       audio.src = '';
       audioRef.current = null;
+      if (currentBlobUrl.current) {
+        api.revokeStreamUrl(currentBlobUrl.current);
+        currentBlobUrl.current = null;
+      }
       if (crossfadeTimeoutRef.current) {
         clearTimeout(crossfadeTimeoutRef.current);
         crossfadeTimeoutRef.current = null;
@@ -264,11 +267,13 @@ export function useAudioPlayer() {
     };
   }, [setAudioElement, setProgress, setDuration, getAudioCtx]);
 
-  // Handle track changes — use direct streaming URL so audio starts immediately
-  // instead of waiting to download the entire file as a blob first.
+  // Handle track changes — fetch as blob so the audio element uses a local
+  // blob: URL (avoids ATS/CORS issues with HTMLMediaElement on Tauri/WebView).
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !currentTrack) return;
+
+    const generation = ++loadGenerationRef.current;
 
     crossfadeTimeoutRef.current = null;
     if (gainNodeRef.current) {
@@ -277,25 +282,44 @@ export function useAudioPlayer() {
       gainNodeRef.current.gain.setValueAtTime(latestRef.current.volume, ctx.currentTime);
     }
 
-    // Direct streaming URL — token in query param, audio streams progressively
-    const streamUrl = api.getTrackStreamUrl(currentTrack.id);
-    audio.src = streamUrl;
-    audio.load();
-
-    initAudioPipeline(audio);
-
-    if (usePlayerStore.getState().isPlaying) {
-      const ctx = audioCtxRef.current;
-      if (ctx?.state === 'suspended') ctx.resume();
-      audio.play().catch((err) => console.error('Playback failed:', err));
+    // Revoke previous blob URL
+    if (currentBlobUrl.current) {
+      api.revokeStreamUrl(currentBlobUrl.current);
+      currentBlobUrl.current = null;
     }
+
+    const loadAndPlay = (blobUrl: string) => {
+      if (loadGenerationRef.current !== generation) {
+        api.revokeStreamUrl(blobUrl);
+        return;
+      }
+      if (!audioRef.current) {
+        api.revokeStreamUrl(blobUrl);
+        return;
+      }
+      audioRef.current.src = blobUrl;
+      currentBlobUrl.current = blobUrl;
+      audioRef.current.load();
+
+      initAudioPipeline(audioRef.current);
+
+      if (usePlayerStore.getState().isPlaying) {
+        const ctx = audioCtxRef.current;
+        if (ctx?.state === 'suspended') ctx.resume();
+        audioRef.current.play().catch((err) => console.error('Playback failed:', err));
+      }
+    };
+
+    api
+      .getSecureStreamUrl(currentTrack.id)
+      .then((blobUrl) => loadAndPlay(blobUrl))
+      .catch((err) => console.error('Failed to load audio:', err));
   }, [currentTrack, initAudioPipeline, getAudioCtx]);
 
   // Handle play/pause
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !currentTrack) return;
-
     if (isPlaying) {
       const ctx = audioCtxRef.current;
       if (ctx?.state === 'suspended') ctx.resume();
