@@ -44,6 +44,7 @@
     "updater:allow-download",
     "updater:allow-download-and-install",
     "updater:allow-install",
+    "os:allow-platform",
     "sql:allow-load",
     "sql:allow-execute",
     "sql:allow-select",
