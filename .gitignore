@@ -5,8 +5,9 @@ node_modules/
 dist/
 build/
 
-# Environment files
+# Environment files (never commit secrets)
 .env
+.env.*
 .env.local
 .env.*.local
 
@@ -52,9 +53,11 @@ SETUP_PLAN.md
 VPS_SETUP_PLAN.md
 CLAUDE.md
 MAIN_RELEASE_IMPLEMENTATION.md
-Latest_Convo_History.md
+Latest_Convo_History*.md
 metadata.json
 Summary*.md
+# Duplicate/temp files (macOS Finder copies with " 2" suffix)
+**/migrations/* [0-9].sql
 
 # Sensitive files
 Oracle_Cloud/

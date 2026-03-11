@@ -23,6 +23,13 @@ const checkDuplicatesSchema = z.object({
   })),
 });
 
+// Schema for updating track metadata
+const updateTrackSchema = z.object({
+  title: z.string().min(1).max(200).trim().optional(),
+  artist: z.string().max(200).trim().nullable().optional(),
+  album: z.string().max(200).trim().nullable().optional(),
+});
+
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const UPLOADS_DIR = resolve(__dirname, '..', '..', 'uploads', 'audio');
 const UPLOADS_BASE = resolve(__dirname, '..', '..', 'uploads');
@@ -581,11 +588,20 @@ export async function trackRoutes(app: FastifyInstance) {
   });
 
   // Update track metadata - ADMIN ONLY
-  app.patch<{ Params: { id: string }; Body: { title?: string; artist?: string; album?: string } }>('/:id', {
+  app.patch<{ Params: { id: string } }>('/:id', {
     preHandler: adminMiddleware,
   }, async (request, reply) => {
     const { id } = request.params;
-    const { title, artist, album } = request.body;
+
+    let body: z.infer<typeof updateTrackSchema>;
+    try {
+      body = updateTrackSchema.parse(request.body);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Invalid input', details: error.errors });
+      }
+      throw error;
+    }
 
     const track = await db.query.tracks.findFirst({
       where: eq(tracks.id, id),
@@ -597,9 +613,9 @@ export async function trackRoutes(app: FastifyInstance) {
 
     await db.update(tracks)
       .set({
-        ...(title && { title }),
-        ...(artist !== undefined && { artist }),
-        ...(album !== undefined && { album }),
+        ...(body.title !== undefined && { title: body.title }),
+        ...(body.artist !== undefined && { artist: body.artist }),
+        ...(body.album !== undefined && { album: body.album }),
       })
       .where(eq(tracks.id, id));
 
