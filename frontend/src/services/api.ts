@@ -1,8 +1,24 @@
 // Use environment variable for API URL, fallback to relative path for dev proxy
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
-// Detect Tauri environment synchronously (no async needed here)
+// Detect Tauri environment synchronously
 const _isTauri = () => '__TAURI_INTERNALS__' in window;
+
+// Cache the platform string so the OS plugin is only queried once.
+// 'web' = not Tauri, 'android' = Android Tauri, 'macos'/'windows'/etc = desktop Tauri.
+let _platformCache: string | null = null;
+
+async function _getPlatform(): Promise<string> {
+  if (_platformCache !== null) return _platformCache;
+  if (!_isTauri()) return (_platformCache = 'web');
+  try {
+    const { platform } = await import('@tauri-apps/plugin-os');
+    _platformCache = await platform();
+  } catch {
+    _platformCache = 'unknown';
+  }
+  return _platformCache;
+}
 
 interface ApiError {
   error: string;
@@ -188,20 +204,35 @@ class ApiClient {
   }
 
   // Returns an audio-playable URL for a track.
-  // In Tauri: returns a stream:// custom-protocol URL — Rust proxies it to the
-  //   backend over HTTP (bypasses ATS/WKWebView restrictions, supports Range).
-  // In browser: fetches the audio as a blob and returns a blob: URL.
+  //
+  // Strategy per platform:
+  //   macOS/Windows (desktop Tauri) — custom stream:// URI scheme, proxied by Rust.
+  //     Bypasses WKWebView ATS restrictions; supports Range requests; zero memory overhead.
+  //   Android (Tauri) — direct HTTP URL with ?token= query param.
+  //     Android WebView's media player does NOT route <audio src="custom://"> through
+  //     Tauri's shouldInterceptRequest handler, so stream:// doesn't work there.
+  //     Direct HTTP works fine on Android (no ATS). Auth middleware accepts ?token= param.
+  //   Browser (non-Tauri) — fetch + blob: URL.
+  //     Needed because browser audio elements can't send Authorization headers.
   async getSecureStreamUrl(id: string): Promise<string> {
     if (!this.token) {
       throw new Error('Not authenticated');
     }
 
     if (_isTauri()) {
-      // stream://<dummy-host>/<trackId>?token=<jwt>
-      // JWT tokens are Base64URL — no percent-encoding needed.
+      const platform = await _getPlatform();
+
+      if (platform === 'android') {
+        // Direct HTTP stream with token in query param — auth middleware supports this.
+        return `${API_URL}/tracks/${id}/stream?token=${encodeURIComponent(this.token)}`;
+      }
+
+      // Desktop (macOS, Windows): stream:// custom protocol, proxied through Rust.
+      // JWT tokens are Base64URL encoded — no percent-encoding needed for the token value.
       return `stream://audio/${id}?token=${this.token}`;
     }
 
+    // Browser: fetch the audio and return a local blob: URL.
     const response = await fetch(`${API_URL}/tracks/${id}/stream`, {
       headers: {
         Authorization: `Bearer ${this.token}`,
