@@ -72,6 +72,25 @@ export function useAudioPlayer() {
     return audioCtxRef.current;
   }, []);
 
+  // On mobile (Android especially), AudioContext starts in suspended state and can
+  // only be resumed during a user gesture. We hook the very first touch/click so the
+  // context is already running by the time a track loads — the blob download takes
+  // several seconds and by then the gesture window has long closed.
+  useEffect(() => {
+    const unlock = () => {
+      const ctx = getAudioCtx();
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+    };
+    document.addEventListener('touchstart', unlock, { once: true, passive: true });
+    document.addEventListener('click', unlock, { once: true });
+    return () => {
+      document.removeEventListener('touchstart', unlock);
+      document.removeEventListener('click', unlock);
+    };
+  }, [getAudioCtx]);
+
   // Initialize the Web Audio pipeline ONCE per audio element.
   // Falls back gracefully if Web Audio API is unavailable (some Android WebViews).
   const initAudioPipeline = useCallback(
@@ -288,24 +307,26 @@ export function useAudioPlayer() {
       currentBlobUrl.current = null;
     }
 
-    const loadAndPlay = (blobUrl: string) => {
+    const loadAndPlay = async (url: string) => {
       if (loadGenerationRef.current !== generation) {
-        api.revokeStreamUrl(blobUrl);
+        api.revokeStreamUrl(url);
         return;
       }
       if (!audioRef.current) {
-        api.revokeStreamUrl(blobUrl);
+        api.revokeStreamUrl(url);
         return;
       }
-      audioRef.current.src = blobUrl;
-      currentBlobUrl.current = blobUrl;
+      audioRef.current.src = url;
+      currentBlobUrl.current = url;
       audioRef.current.load();
 
       initAudioPipeline(audioRef.current);
 
       if (usePlayerStore.getState().isPlaying) {
         const ctx = audioCtxRef.current;
-        if (ctx?.state === 'suspended') ctx.resume();
+        // Await resume — on Android the context starts suspended and must be
+        // fully running before play() or audio routes through it silently.
+        if (ctx?.state === 'suspended') await ctx.resume().catch(() => {});
         audioRef.current.play().catch((err) => console.error('Playback failed:', err));
       }
     };
@@ -322,8 +343,10 @@ export function useAudioPlayer() {
     if (!audio || !currentTrack) return;
     if (isPlaying) {
       const ctx = audioCtxRef.current;
-      if (ctx?.state === 'suspended') ctx.resume();
-      audio.play().catch((err) => console.error('Playback failed:', err));
+      (async () => {
+        if (ctx?.state === 'suspended') await ctx.resume().catch(() => {});
+        audio.play().catch((err) => console.error('Playback failed:', err));
+      })();
     } else {
       audio.pause();
     }
