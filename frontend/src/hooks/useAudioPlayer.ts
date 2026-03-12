@@ -5,6 +5,12 @@ import { isTauri } from '@/utils/tauri';
 
 const EQ_FREQUENCIES = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 
+// Android WebView's Web Audio API is unreliable with MediaElementAudioSourceNode:
+// once createMediaElementSource() is called the audio element is detached from the
+// native render path and routed through the Web Audio graph, which silences playback
+// on many Android versions. Detect synchronously via UA so we can skip the pipeline.
+const IS_ANDROID = isTauri() && /android/i.test(navigator.userAgent);
+
 export function useAudioPlayer() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const currentBlobUrl = useRef<string | null>(null);
@@ -72,11 +78,11 @@ export function useAudioPlayer() {
     return audioCtxRef.current;
   }, []);
 
-  // On mobile (Android especially), AudioContext starts in suspended state and can
-  // only be resumed during a user gesture. We hook the very first touch/click so the
-  // context is already running by the time a track loads — the blob download takes
-  // several seconds and by then the gesture window has long closed.
+  // On desktop, AudioContext starts suspended and must be resumed during a user gesture.
+  // We hook the very first touch/click so the context is running before a track loads.
+  // On Android we skip Web Audio entirely (IS_ANDROID), so no AudioContext to unlock.
   useEffect(() => {
+    if (IS_ANDROID) return;
     const unlock = () => {
       const ctx = getAudioCtx();
       if (ctx.state === 'suspended') {
@@ -320,12 +326,16 @@ export function useAudioPlayer() {
       currentBlobUrl.current = url;
       audioRef.current.load();
 
-      initAudioPipeline(audioRef.current);
+      // Skip the Web Audio pipeline on Android — createMediaElementSource() detaches
+      // the element from the native render path and routes it through the Web Audio
+      // graph, which silences playback on Android WebView. Volume falls back to
+      // audio.volume (see the volume useEffect below).
+      if (!IS_ANDROID) {
+        initAudioPipeline(audioRef.current);
+      }
 
       if (usePlayerStore.getState().isPlaying) {
         const ctx = audioCtxRef.current;
-        // Await resume — on Android the context starts suspended and must be
-        // fully running before play() or audio routes through it silently.
         if (ctx?.state === 'suspended') await ctx.resume().catch(() => {});
         audioRef.current.play().catch((err) => console.error('Playback failed:', err));
       }
