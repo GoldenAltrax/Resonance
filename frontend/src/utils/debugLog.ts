@@ -12,8 +12,6 @@ export interface LogEntry {
 const MAX_ENTRIES = 400;
 const entries: LogEntry[] = [];
 const listeners = new Set<() => void>();
-let _panelOpen = false;
-const panelListeners = new Set<() => void>();
 
 function timestamp() {
   const d = new Date();
@@ -52,22 +50,5 @@ export const dbg = {
       .map((e) => `[${e.ts}] [${e.level.toUpperCase()}] ${e.msg}`)
       .join('\n');
     return navigator.clipboard.writeText(text);
-  },
-
-  openPanel: () => {
-    _panelOpen = true;
-    panelListeners.forEach((fn) => fn());
-  },
-
-  closePanel: () => {
-    _panelOpen = false;
-    panelListeners.forEach((fn) => fn());
-  },
-
-  isPanelOpen: () => _panelOpen,
-
-  subscribePanelState: (fn: () => void): (() => void) => {
-    panelListeners.add(fn);
-    return () => panelListeners.delete(fn);
   },
 };
