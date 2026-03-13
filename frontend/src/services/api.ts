@@ -1,6 +1,11 @@
 // Use environment variable for API URL, fallback to relative path for dev proxy
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
+// Lazy import to avoid a circular dep — debugLog has no deps on api.
+function _dbg(level: 'info' | 'warn' | 'error', msg: string) {
+  import('@/utils/debugLog').then(({ dbg }) => dbg[level](msg)).catch(() => {});
+}
+
 // Detect Tauri environment synchronously
 const _isTauri = () => '__TAURI_INTERNALS__' in window;
 
@@ -233,11 +238,15 @@ class ApiClient {
     }
 
     // Android Tauri + Browser: fetch with Authorization header, return local blob: URL.
-    const response = await fetch(`${API_URL}/tracks/${id}/stream`, {
+    const fetchUrl = `${API_URL}/tracks/${id}/stream`;
+    _dbg('info', `blob fetch: GET ${fetchUrl}`);
+    const response = await fetch(fetchUrl, {
       headers: {
         Authorization: `Bearer ${this.token}`,
       },
     });
+
+    _dbg(response.ok ? 'info' : 'error', `blob fetch response: ${response.status} ${response.statusText}`);
 
     if (!response.ok) {
       if (response.status === 401 && this.onSessionExpired) {
@@ -247,6 +256,7 @@ class ApiClient {
     }
 
     const blob = await response.blob();
+    _dbg('info', `blob ready: size=${blob.size} type="${blob.type}"`);
     return URL.createObjectURL(blob);
   }
 
