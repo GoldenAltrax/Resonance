@@ -1,14 +1,15 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { Users, Music, ListMusic, Ticket, Plus, Trash2, Copy, Check, X, RefreshCw, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Users, Music, ListMusic, Ticket, Plus, Trash2, Copy, Check, X, RefreshCw, ToggleLeft, ToggleRight, Terminal } from 'lucide-react';
 import { api, AdminStats, AdminUser, InviteCode } from '@/services/api';
 import { toast } from '@/stores/toastStore';
+import DebugPanel from '@/components/DebugPanel';
 
 const AdminView = () => {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [inviteCodes, setInviteCodes] = useState<InviteCode[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'invites'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'invites' | 'debug'>('overview');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
@@ -123,17 +124,18 @@ const AdminView = () => {
 
       {/* Tab Navigation */}
       <div className="flex gap-2 mb-8 border-b border-zinc-800 pb-4">
-        {(['overview', 'users', 'invites'] as const).map((tab) => (
+        {(['overview', 'users', 'invites', 'debug'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 rounded-lg font-medium text-sm transition-all ${
+            className={`px-4 py-2 rounded-lg font-medium text-sm transition-all flex items-center gap-1.5 ${
               activeTab === tab
                 ? 'bg-zinc-800 text-white'
                 : 'text-zinc-500 hover:text-white hover:bg-zinc-800/50'
             }`}
           >
-            {tab === 'overview' ? 'Overview' : tab === 'users' ? 'Users' : 'Invite Codes'}
+            {tab === 'debug' && <Terminal className="w-3.5 h-3.5" />}
+            {tab === 'overview' ? 'Overview' : tab === 'users' ? 'Users' : tab === 'invites' ? 'Invite Codes' : 'Debug'}
           </button>
         ))}
       </div>
@@ -339,6 +341,9 @@ const AdminView = () => {
           </div>
         </div>
       )}
+
+      {/* Debug Tab */}
+      {activeTab === 'debug' && <DebugPanel />}
 
       {/* Create Invite Code Modal */}
       {showCreateModal && (

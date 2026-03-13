@@ -30,7 +30,7 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { usePlatform } from '@/hooks/usePlatform';
 import BottomNav from '@/components/android/BottomNav';
 import MobilePlayerBar from '@/components/android/MobilePlayerBar';
-import DebugPanel from '@/components/DebugPanel';
+
 
 type AuthScreen = 'landing' | 'login' | 'signup';
 
@@ -222,7 +222,6 @@ const App = () => {
         </main>
         <PlayerBar />
         <ToastContainer />
-        <DebugPanel />
         <KeyboardShortcutsModal
           isOpen={showShortcutsModal}
           onClose={() => setShowShortcutsModal(false)}

@@ -1,33 +1,22 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Clipboard, Trash2, Check } from 'lucide-react';
+import { Clipboard, Trash2, Check } from 'lucide-react';
 import { dbg, LogEntry } from '@/utils/debugLog';
 
+// Renders the debug log inline (no fixed overlay — embed inside a parent container).
 export default function DebugPanel() {
-  const [open, setOpen] = useState(dbg.isPanelOpen());
   const [entries, setEntries] = useState<LogEntry[]>(dbg.getEntries());
   const [copied, setCopied] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const unsub = dbg.subscribePanelState(() => {
-      setOpen(dbg.isPanelOpen());
-    });
+    setEntries(dbg.getEntries());
+    const unsub = dbg.subscribe(() => setEntries(dbg.getEntries()));
     return unsub;
   }, []);
 
   useEffect(() => {
-    if (!open) return;
-    setEntries(dbg.getEntries());
-    const unsub = dbg.subscribe(() => setEntries(dbg.getEntries()));
-    return unsub;
-  }, [open]);
-
-  // Auto-scroll to bottom on new entries
-  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [entries.length]);
-
-  if (!open) return null;
 
   const handleCopy = async () => {
     await dbg.copyToClipboard();
@@ -48,11 +37,11 @@ export default function DebugPanel() {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] bg-black/95 flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 shrink-0">
-        <span className="text-sm font-mono font-semibold text-zinc-200">
-          Debug Log ({entries.length})
+    <div className="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl overflow-hidden flex flex-col" style={{ minHeight: '400px' }}>
+      {/* Toolbar */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/50 shrink-0">
+        <span className="text-sm font-mono font-semibold text-zinc-400">
+          {entries.length} entries
         </span>
         <div className="flex items-center gap-2">
           <button
@@ -69,19 +58,13 @@ export default function DebugPanel() {
             <Trash2 className="w-3.5 h-3.5" />
             Clear
           </button>
-          <button
-            onClick={() => dbg.closePanel()}
-            className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
         </div>
       </div>
 
       {/* Log entries */}
-      <div className="flex-1 overflow-y-auto font-mono text-xs p-3 space-y-1">
+      <div className="overflow-y-auto font-mono text-xs p-3 space-y-1 flex-1">
         {entries.length === 0 && (
-          <div className="text-zinc-600 text-center pt-8">No logs yet</div>
+          <div className="text-zinc-600 text-center pt-8">No logs yet — play a track to see output</div>
         )}
         {entries.map((e, i) => (
           <div key={i} className="flex gap-2 items-start leading-relaxed">
