@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { usePlayerStore } from '@/stores/playerStore';
 import { Track, api } from '@/services/api';
 import { isTauri } from '@/utils/tauri';
+import { dbg } from '@/utils/debugLog';
 
 const EQ_FREQUENCIES = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 
@@ -10,6 +11,11 @@ const EQ_FREQUENCIES = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 // native render path and routed through the Web Audio graph, which silences playback
 // on many Android versions. Detect synchronously via UA so we can skip the pipeline.
 const IS_ANDROID = isTauri() && /android/i.test(navigator.userAgent);
+
+// Log environment info once at module load so the debug panel always has context.
+dbg.info(`--- useAudioPlayer loaded ---`);
+dbg.info(`isTauri=${isTauri()} IS_ANDROID=${IS_ANDROID}`);
+dbg.info(`UA=${navigator.userAgent.substring(0, 120)}`);
 
 export function useAudioPlayer() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -265,20 +271,44 @@ export function useAudioPlayer() {
     };
 
     const handleError = (e: Event) => {
+      const target = e.target as HTMLAudioElement;
+      const err = target?.error;
+      const msg = `Audio error: code=${err?.code} msg="${err?.message}" src=${target?.src?.substring(0, 60)}`;
+      dbg.error(msg);
       console.error('Audio error:', e);
       usePlayerStore.getState().pause();
     };
+
+    const handleCanPlay = () => {
+      const el = audio as HTMLAudioElement;
+      dbg.info(`canplay — readyState=${el.readyState} duration=${el.duration}`);
+    };
+
+    const handleStalled = () => dbg.warn(`stalled — readyState=${audio.readyState} networkState=${audio.networkState}`);
+    const handleWaiting = () => dbg.warn(`waiting — readyState=${audio.readyState}`);
+    const handleSuspend = () => dbg.info(`suspend — readyState=${audio.readyState}`);
+    const handlePlaying = () => dbg.info(`playing event fired`);
 
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('loadedmetadata', handleLoadedMetadata);
     audio.addEventListener('ended', handleEnded);
     audio.addEventListener('error', handleError);
+    audio.addEventListener('canplay', handleCanPlay);
+    audio.addEventListener('stalled', handleStalled);
+    audio.addEventListener('waiting', handleWaiting);
+    audio.addEventListener('suspend', handleSuspend);
+    audio.addEventListener('playing', handlePlaying);
 
     return () => {
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('error', handleError);
+      audio.removeEventListener('canplay', handleCanPlay);
+      audio.removeEventListener('stalled', handleStalled);
+      audio.removeEventListener('waiting', handleWaiting);
+      audio.removeEventListener('suspend', handleSuspend);
+      audio.removeEventListener('playing', handlePlaying);
       audio.src = '';
       audioRef.current = null;
       if (currentBlobUrl.current) {
@@ -299,6 +329,7 @@ export function useAudioPlayer() {
     if (!audio || !currentTrack) return;
 
     const generation = ++loadGenerationRef.current;
+    dbg.info(`Track change: "${currentTrack.title}" id=${currentTrack.id} gen=${generation}`);
 
     crossfadeTimeoutRef.current = null;
     if (gainNodeRef.current) {
@@ -314,16 +345,23 @@ export function useAudioPlayer() {
     }
 
     const loadAndPlay = async (url: string) => {
+      const urlType = url.startsWith('blob:') ? 'blob' : url.startsWith('stream:') ? 'stream' : 'other';
+      dbg.info(`loadAndPlay: gen=${generation} urlType=${urlType}`);
+
       if (loadGenerationRef.current !== generation) {
+        dbg.warn(`loadAndPlay: stale gen=${generation}, current=${loadGenerationRef.current} — discarding`);
         api.revokeStreamUrl(url);
         return;
       }
       if (!audioRef.current) {
+        dbg.warn('loadAndPlay: audioRef is null — discarding');
         api.revokeStreamUrl(url);
         return;
       }
+
       audioRef.current.src = url;
       currentBlobUrl.current = url;
+      dbg.info(`audio.src set, calling load()`);
       audioRef.current.load();
 
       // Skip the Web Audio pipeline on Android — createMediaElementSource() detaches
@@ -331,20 +369,44 @@ export function useAudioPlayer() {
       // graph, which silences playback on Android WebView. Volume falls back to
       // audio.volume (see the volume useEffect below).
       if (!IS_ANDROID) {
+        dbg.info('initAudioPipeline: running (desktop)');
         initAudioPipeline(audioRef.current);
+      } else {
+        dbg.info('initAudioPipeline: skipped (Android)');
+        audioRef.current.volume = latestRef.current.volume;
       }
 
-      if (usePlayerStore.getState().isPlaying) {
+      const isPlaying = usePlayerStore.getState().isPlaying;
+      dbg.info(`isPlaying=${isPlaying} — ${isPlaying ? 'calling play()' : 'not calling play() (paused)'}`);
+
+      if (isPlaying) {
         const ctx = audioCtxRef.current;
-        if (ctx?.state === 'suspended') await ctx.resume().catch(() => {});
-        audioRef.current.play().catch((err) => console.error('Playback failed:', err));
+        if (ctx?.state === 'suspended') {
+          dbg.info('AudioContext suspended — awaiting resume()');
+          await ctx.resume().catch((e) => dbg.warn(`ctx.resume() failed: ${e}`));
+        }
+        dbg.info(`audio.play() — readyState=${audioRef.current.readyState} networkState=${audioRef.current.networkState}`);
+        audioRef.current
+          .play()
+          .then(() => dbg.info('audio.play() resolved'))
+          .catch((err) => {
+            dbg.error(`audio.play() rejected: ${err}`);
+            console.error('Playback failed:', err);
+          });
       }
     };
 
+    dbg.info(`getSecureStreamUrl: fetching for id=${currentTrack.id}`);
     api
       .getSecureStreamUrl(currentTrack.id)
-      .then((blobUrl) => loadAndPlay(blobUrl))
-      .catch((err) => console.error('Failed to load audio:', err));
+      .then((blobUrl) => {
+        dbg.info(`getSecureStreamUrl: got ${blobUrl.startsWith('blob:') ? 'blob URL' : blobUrl.substring(0, 40)}`);
+        loadAndPlay(blobUrl);
+      })
+      .catch((err) => {
+        dbg.error(`getSecureStreamUrl error: ${err}`);
+        console.error('Failed to load audio:', err);
+      });
   }, [currentTrack, initAudioPipeline, getAudioCtx]);
 
   // Handle play/pause
@@ -354,10 +416,21 @@ export function useAudioPlayer() {
     if (isPlaying) {
       const ctx = audioCtxRef.current;
       (async () => {
-        if (ctx?.state === 'suspended') await ctx.resume().catch(() => {});
-        audio.play().catch((err) => console.error('Playback failed:', err));
+        if (ctx?.state === 'suspended') {
+          dbg.info('play/pause effect: ctx suspended — resuming');
+          await ctx.resume().catch((e) => dbg.warn(`ctx.resume() failed: ${e}`));
+        }
+        dbg.info(`play/pause effect: play() — readyState=${audio.readyState} src=${audio.src.substring(0, 50)}`);
+        audio
+          .play()
+          .then(() => dbg.info('play/pause effect: play() resolved'))
+          .catch((err) => {
+            dbg.error(`play/pause effect: play() rejected: ${err}`);
+            console.error('Playback failed:', err);
+          });
       })();
     } else {
+      dbg.info('play/pause effect: pause()');
       audio.pause();
     }
   }, [isPlaying, currentTrack]);

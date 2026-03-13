@@ -4,10 +4,27 @@ import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/stores/toastStore';
 import { api } from '@/services/api';
 import { validatePassword, getPasswordStrength, isPasswordValid } from '@/utils/password';
+import { dbg } from '@/utils/debugLog';
 
 const SettingsView = () => {
   const { user, updateProfile, uploadAvatar, isLoading } = useAuthStore();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [debugTaps, setDebugTaps] = useState(0);
+  const debugTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleDebugTap = () => {
+    setDebugTaps((n) => {
+      const next = n + 1;
+      if (next >= 5) {
+        dbg.openPanel();
+        return 0;
+      }
+      // Reset counter after 2 s of inactivity
+      if (debugTapTimer.current) clearTimeout(debugTapTimer.current);
+      debugTapTimer.current = setTimeout(() => setDebugTaps(0), 2000);
+      return next;
+    });
+  };
   const [showEditModal, setShowEditModal] = useState(false);
   const [showSecurityModal, setShowSecurityModal] = useState(false);
   const [editUsername, setEditUsername] = useState(user?.username || '');
@@ -204,6 +221,17 @@ const SettingsView = () => {
         >
           <LogOut className="w-5 h-5" />
           Logout from Resonance
+        </button>
+      </div>
+
+      {/* Hidden debug trigger — tap 5 times to open the debug log panel */}
+      <div className="mt-8 flex justify-center">
+        <button
+          onClick={handleDebugTap}
+          className="text-zinc-800 text-xs select-none"
+          style={{ WebkitUserSelect: 'none' }}
+        >
+          v4.1.4{debugTaps > 0 ? ` (${debugTaps}/5)` : ''}
         </button>
       </div>
 
