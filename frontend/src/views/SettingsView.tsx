@@ -231,7 +231,7 @@ const SettingsView = () => {
           className="text-zinc-800 text-xs select-none"
           style={{ WebkitUserSelect: 'none' }}
         >
-          v4.1.4{debugTaps > 0 ? ` (${debugTaps}/5)` : ''}
+          v4.1.5{debugTaps > 0 ? ` (${debugTaps}/5)` : ''}
         </button>
       </div>
 
