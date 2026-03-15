@@ -1,4 +1,11 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
+
+export function formatTime(seconds: number): string {
+  if (isNaN(seconds) || !isFinite(seconds)) return '0:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
 import { usePlayerStore } from '@/stores/playerStore';
 import { Track, api } from '@/services/api';
 import { isTauri } from '@/utils/tauri';
@@ -471,12 +478,5 @@ export function useAudioPlayer() {
     }
   }, [isPlaying, currentTrack]);
 
-  const formatTime = useCallback((seconds: number): string => {
-    if (isNaN(seconds) || !isFinite(seconds)) return '0:00';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  }, []);
-
-  return { audioRef, formatTime };
+  return { audioRef };
 }
