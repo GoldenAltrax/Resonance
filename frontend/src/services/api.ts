@@ -284,6 +284,19 @@ class ApiClient {
     });
   }
 
+  // User preferences (cross-device sync)
+  async getPreferences(userId: string): Promise<UserPreferences | null> {
+    const res = await this.request<{ preferences: UserPreferences | null }>(`/users/${userId}/preferences`);
+    return res.preferences;
+  }
+
+  async updatePreferences(userId: string, prefs: UserPreferences): Promise<void> {
+    await this.request<{ ok: boolean }>(`/users/${userId}/preferences`, {
+      method: 'PUT',
+      body: JSON.stringify(prefs),
+    });
+  }
+
   // User endpoints
   async updateUser(id: string, data: { username?: string; email?: string }) {
     return this.request<User>('/users/' + id, {
@@ -407,6 +420,18 @@ class ApiClient {
 }
 
 // Types
+export interface UserPreferences {
+  volume?: number;
+  isMuted?: boolean;
+  shuffle?: boolean;
+  repeat?: 'none' | 'one' | 'all';
+  crossfadeEnabled?: boolean;
+  crossfadeDuration?: number;
+  eqEnabled?: boolean;
+  eqGains?: number[];
+  eqPreset?: string;
+}
+
 export interface User {
   id: string;
   username: string;

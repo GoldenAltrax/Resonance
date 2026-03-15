@@ -41,9 +41,9 @@ const App = () => {
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
 
-  const { isAuthenticated, token, checkAuth } = useAuthStore();
+  const { isAuthenticated, token, user, checkAuth } = useAuthStore();
   const { playlists, fetchPlaylists } = usePlaylistStore();
-  const { currentTrack, showLyrics, showQueue } = usePlayerStore();
+  const { currentTrack, showLyrics, showQueue, loadPreferences } = usePlayerStore();
   const { startMonitoring } = useNetworkStore();
   const { initCache } = useDownloadStore();
   const { isAndroid } = usePlatform();
@@ -79,6 +79,15 @@ const App = () => {
       fetchPlaylists();
     }
   }, [isAuthenticated, fetchPlaylists]);
+
+  // Load synced player preferences from server on login
+  useEffect(() => {
+    if (isAuthenticated && user?.id) {
+      api.getPreferences(user.id).then((prefs) => {
+        if (prefs) loadPreferences(prefs);
+      }).catch(() => {});
+    }
+  }, [isAuthenticated, user?.id, loadPreferences]);
 
   const navigateToPlaylist = (id: string) => {
     setSelectedPlaylistId(id);

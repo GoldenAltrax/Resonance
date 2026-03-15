@@ -7,6 +7,7 @@ export const users = sqliteTable('users', {
   email: text('email').unique(),
   passwordHash: text('password_hash').notNull(),
   profileImage: text('profile_image'),
+  preferences: text('preferences'), // JSON string of synced player preferences
   createdAt: integer('created_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
 });

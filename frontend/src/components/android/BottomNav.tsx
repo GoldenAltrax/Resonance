@@ -1,13 +1,6 @@
-import { Home, Library, Search, ListMusic, Settings } from 'lucide-react';
+import { Home, Library, Search, ListMusic, Settings, Shield } from 'lucide-react';
 import { Page } from '@/types';
-
-const TABS: { id: Page; label: string; icon: React.FC<{ className?: string }> }[] = [
-  { id: 'home', label: 'Home', icon: Home },
-  { id: 'library', label: 'Library', icon: Library },
-  { id: 'search', label: 'Search', icon: Search },
-  { id: 'playlists', label: 'Playlists', icon: ListMusic },
-  { id: 'settings', label: 'Settings', icon: Settings },
-];
+import { useAuthStore } from '@/stores/authStore';
 
 interface Props {
   activePage: Page;
@@ -15,12 +8,24 @@ interface Props {
 }
 
 export default function BottomNav({ activePage, onNavigate }: Props) {
+  const user = useAuthStore((s) => s.user);
+  const isAdmin = user?.isAdmin ?? false;
+
+  const tabs: { id: Page; label: string; icon: React.FC<{ className?: string }> }[] = [
+    { id: 'home', label: 'Home', icon: Home },
+    { id: 'library', label: 'Library', icon: Library },
+    { id: 'search', label: 'Search', icon: Search },
+    { id: 'playlists', label: 'Playlists', icon: ListMusic },
+    ...(isAdmin ? [{ id: 'admin' as Page, label: 'Admin', icon: Shield }] : []),
+    { id: 'settings', label: 'Settings', icon: Settings },
+  ];
+
   return (
     <div
       className="fixed bottom-0 left-0 right-0 bg-[#0d0d0d] border-t border-zinc-800/50 z-50 flex"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
-      {TABS.map(({ id, label, icon: Icon }) => {
+      {tabs.map(({ id, label, icon: Icon }) => {
         const active = activePage === id || (id === 'playlists' && activePage === 'playlist-detail');
         return (
           <button
