@@ -27,6 +27,7 @@ import KeyboardShortcutsModal from '@/components/ui/KeyboardShortcutsModal';
 import OfflineBanner from '@/components/OfflineBanner';
 import UpdateNotification from '@/components/UpdateNotification';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import { useAudioPlayer } from '@/hooks/useAudioPlayer';
 import { usePlatform } from '@/hooks/usePlatform';
 import BottomNav from '@/components/android/BottomNav';
 import MobilePlayerBar from '@/components/android/MobilePlayerBar';
@@ -47,6 +48,9 @@ const App = () => {
   const { startMonitoring } = useNetworkStore();
   const { initCache } = useDownloadStore();
   const { isAndroid } = usePlatform();
+
+  // Audio engine — must run on all platforms (Android uses MobilePlayerBar which doesn't call this)
+  useAudioPlayer();
 
   // Enable keyboard shortcuts for player controls
   useKeyboardShortcuts({ onOpenHelp: () => setShowShortcutsModal(true) });

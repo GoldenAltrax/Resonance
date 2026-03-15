@@ -21,7 +21,7 @@ import {
   CloudDownload,
 } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
-import { useAudioPlayer } from '@/hooks/useAudioPlayer';
+import { formatTime } from '@/hooks/useAudioPlayer';
 import { useFavoritesStore } from '@/stores/favoritesStore';
 import LyricsPanel from './LyricsPanel';
 import QueuePanel from './QueuePanel';
@@ -72,7 +72,6 @@ export const PlayerBar = () => {
     stopRadio,
   } = usePlayerStore();
 
-  const { formatTime } = useAudioPlayer();
   const { isFavorited, toggleFavorite } = useFavoritesStore();
   const [showSleepMenu, setShowSleepMenu] = useState(false);
   const [showRadioInfo, setShowRadioInfo] = useState(false);
