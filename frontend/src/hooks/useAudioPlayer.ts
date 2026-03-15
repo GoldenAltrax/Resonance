@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 
 export function formatTime(seconds: number): string {
   if (isNaN(seconds) || !isFinite(seconds)) return '0:00';
