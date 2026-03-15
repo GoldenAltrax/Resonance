@@ -60,6 +60,7 @@ export function useAudioPlayer() {
     setAudioElement,
     setProgress,
     setDuration,
+    setLoadingAudio,
   } = usePlayerStore();
 
   // Keep latestRef in sync on every render
@@ -322,6 +323,34 @@ export function useAudioPlayer() {
     };
   }, [setAudioElement, setProgress, setDuration, getAudioCtx]);
 
+  // Android: mark the audio element as "user-activated" on the very first touch.
+  // Android WebView blocks play() called from async callbacks (blob fetch, setTimeout)
+  // unless the element was previously activated by a synchronous user-gesture call.
+  // Calling play() here will fail (NotSupportedError — no src yet) but that's intentional:
+  // Chrome/WebView records the activation even on rejection, allowing all subsequent
+  // async play() calls on this same element to proceed without a fresh gesture.
+  useEffect(() => {
+    if (!IS_ANDROID) return;
+
+    const unlock = () => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      dbg.info('Android: audio unlock via first gesture — calling play() to activate element');
+      audio.play().catch((e) => {
+        // Expected: NotSupportedError (no src yet). Element is now user-activated.
+        dbg.info(`Android: unlock play() settled (${e?.name ?? 'ok'}) — element activated`);
+      });
+    };
+
+    // Capture phase so we run before React's synthetic event system
+    document.addEventListener('touchstart', unlock, { capture: true, passive: true, once: true });
+    document.addEventListener('click', unlock, { capture: true, once: true });
+    return () => {
+      document.removeEventListener('touchstart', unlock, true);
+      document.removeEventListener('click', unlock, true);
+    };
+  }, []); // audio element is always initialized before this effect runs (defined after init effect)
+
   // Handle track changes — fetch as blob so the audio element uses a local
   // blob: URL (avoids ATS/CORS issues with HTMLMediaElement on Tauri/WebView).
   useEffect(() => {
@@ -329,6 +358,7 @@ export function useAudioPlayer() {
     if (!audio || !currentTrack) return;
 
     const generation = ++loadGenerationRef.current;
+    if (IS_ANDROID) setLoadingAudio(false); // clear any stale loading state from previous track
     dbg.info(`Track change: "${currentTrack.title}" id=${currentTrack.id} gen=${generation}`);
 
     crossfadeTimeoutRef.current = null;
@@ -396,15 +426,21 @@ export function useAudioPlayer() {
       }
     };
 
+    if (IS_ANDROID) {
+      setLoadingAudio(true);
+      dbg.info(`Android blob fetch start: id=${currentTrack.id}`);
+    }
     dbg.info(`getSecureStreamUrl: fetching for id=${currentTrack.id}`);
     api
       .getSecureStreamUrl(currentTrack.id)
       .then((blobUrl) => {
         dbg.info(`getSecureStreamUrl: got ${blobUrl.startsWith('blob:') ? 'blob URL' : blobUrl.substring(0, 40)}`);
+        if (IS_ANDROID) setLoadingAudio(false);
         loadAndPlay(blobUrl);
       })
       .catch((err) => {
         dbg.error(`getSecureStreamUrl error: ${err}`);
+        if (IS_ANDROID) setLoadingAudio(false);
         console.error('Failed to load audio:', err);
       });
   }, [currentTrack, initAudioPipeline, getAudioCtx]);

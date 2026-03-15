@@ -71,8 +71,12 @@ interface PlayerState {
   // Audio element reference (set from useAudioPlayer hook)
   audioElement: HTMLAudioElement | null;
 
+  // True while Android blob fetch is in progress (src not yet set on audio element)
+  isLoadingAudio: boolean;
+
   // Actions
   setAudioElement: (element: HTMLAudioElement | null) => void;
+  setLoadingAudio: (loading: boolean) => void;
   play: (track?: Track, queue?: Track[]) => void;
   pause: () => void;
   resume: () => void;
@@ -114,6 +118,7 @@ export const usePlayerStore = create<PlayerState>()(
       queue: [],
       queueIndex: -1,
       isPlaying: false,
+      isLoadingAudio: false,
       volume: 0.7,
       isMuted: false,
       progress: 0,
@@ -134,6 +139,8 @@ export const usePlayerStore = create<PlayerState>()(
       sleepTimerEnd: null,
       sleepTimerMinutes: null,
       audioElement: null,
+
+      setLoadingAudio: (loading) => set({ isLoadingAudio: loading }),
 
       setAudioElement: (element) => {
         set({ audioElement: element });
