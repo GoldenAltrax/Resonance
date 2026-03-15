@@ -37,6 +37,18 @@ const updateUserSchema = z.object({
   email: z.string().email().optional(),
 });
 
+const preferencesSchema = z.object({
+  volume: z.number().min(0).max(1).optional(),
+  isMuted: z.boolean().optional(),
+  shuffle: z.boolean().optional(),
+  repeat: z.enum(['none', 'one', 'all']).optional(),
+  crossfadeEnabled: z.boolean().optional(),
+  crossfadeDuration: z.number().min(0).max(12).optional(),
+  eqEnabled: z.boolean().optional(),
+  eqGains: z.array(z.number().min(-12).max(12)).length(10).optional(),
+  eqPreset: z.string().optional(),
+});
+
 export async function userRoutes(app: FastifyInstance) {
   // Apply auth middleware to all routes
   app.addHook('preHandler', authMiddleware);
@@ -96,6 +108,51 @@ export async function userRoutes(app: FastifyInstance) {
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Invalid input', details: error.errors });
+      }
+      throw error;
+    }
+  });
+
+  // Get player preferences
+  app.get('/:id/preferences', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    const { userId } = request.user as { userId: string };
+    const { id } = request.params;
+
+    if (userId !== id) {
+      return reply.status(403).send({ error: 'Forbidden' });
+    }
+
+    const user = await db.query.users.findFirst({ where: eq(users.id, id) });
+    if (!user) return reply.status(404).send({ error: 'User not found' });
+
+    try {
+      const preferences = user.preferences ? JSON.parse(user.preferences) : null;
+      return reply.send({ preferences });
+    } catch {
+      return reply.send({ preferences: null });
+    }
+  });
+
+  // Save player preferences
+  app.put('/:id/preferences', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    try {
+      const { userId } = request.user as { userId: string };
+      const { id } = request.params;
+
+      if (userId !== id) {
+        return reply.status(403).send({ error: 'Forbidden' });
+      }
+
+      const prefs = preferencesSchema.parse(request.body);
+
+      await db.update(users)
+        .set({ preferences: JSON.stringify(prefs), updatedAt: new Date() })
+        .where(eq(users.id, id));
+
+      return reply.send({ ok: true });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Invalid preferences', details: error.errors });
       }
       throw error;
     }

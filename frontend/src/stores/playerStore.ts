@@ -1,6 +1,21 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { Track, api } from '@/services/api';
+import { Track, UserPreferences, api } from '@/services/api';
+
+// Debounce for server preferences sync
+let _syncPrefTimeout: ReturnType<typeof setTimeout> | null = null;
+
+const _syncPrefsToServer = (prefs: UserPreferences) => {
+  if (_syncPrefTimeout) clearTimeout(_syncPrefTimeout);
+  _syncPrefTimeout = setTimeout(() => {
+    // Lazy import to avoid circular dep at module init time
+    import('@/stores/authStore').then(({ useAuthStore }) => {
+      const userId = useAuthStore.getState().user?.id;
+      if (!userId) return;
+      api.updatePreferences(userId, prefs).catch(() => {});
+    });
+  }, 1500);
+};
 
 // Debounce tracking for logPlay API calls
 let lastLoggedTrackId: string | null = null;
@@ -88,6 +103,8 @@ interface PlayerState {
   // Radio mode
   startRadio: (track: Track, similarTracks: Track[]) => void;
   stopRadio: () => void;
+  // Cross-device sync
+  loadPreferences: (prefs: UserPreferences) => void;
 }
 
 export const usePlayerStore = create<PlayerState>()(
@@ -250,6 +267,8 @@ export const usePlayerStore = create<PlayerState>()(
         if (audioElement) {
           audioElement.volume = volume;
         }
+        const s = get();
+        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
       },
 
       toggleMute: () => {
@@ -259,13 +278,19 @@ export const usePlayerStore = create<PlayerState>()(
         if (audioElement) {
           audioElement.volume = newMuted ? 0 : volume;
         }
+        const s = get();
+        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
       },
 
       setProgress: (progress) => set({ progress }),
 
   setDuration: (duration) => set({ duration }),
 
-  toggleShuffle: () => set((state) => ({ shuffle: !state.shuffle })),
+  toggleShuffle: () => {
+        set((state) => ({ shuffle: !state.shuffle }));
+        const s = get();
+        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
+      },
 
   toggleLyrics: () => set((state) => ({ showLyrics: !state.showLyrics, showQueue: false })),
 
@@ -273,26 +298,40 @@ export const usePlayerStore = create<PlayerState>()(
 
       toggleDownloadPanel: () => set((state) => ({ showDownloadPanel: !state.showDownloadPanel })),
 
-      setCrossfade: (enabled, duration) =>
+      setCrossfade: (enabled, duration) => {
         set((state) => ({
           crossfadeEnabled: enabled,
           crossfadeDuration: duration ?? state.crossfadeDuration,
-        })),
+        }));
+        const s = get();
+        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
+      },
 
-      setEqGain: (bandIndex, gain) =>
+      setEqGain: (bandIndex, gain) => {
         set((state) => {
           const eqGains = [...state.eqGains];
           eqGains[bandIndex] = gain;
           return { eqGains };
-        }),
+        });
+        const s = get();
+        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
+      },
 
-      setEqPreset: (preset, gains) => set({ eqPreset: preset, eqGains: gains }),
+      setEqPreset: (preset, gains) => {
+        set({ eqPreset: preset, eqGains: gains });
+        const s = get();
+        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
+      },
 
-      toggleEq: () => set((state) => ({ eqEnabled: !state.eqEnabled })),
+      toggleEq: () => {
+        set((state) => ({ eqEnabled: !state.eqEnabled }));
+        const s = get();
+        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
+      },
 
       toggleEqualizer: () => set((state) => ({ showEqualizer: !state.showEqualizer })),
 
-      toggleRepeat: () =>
+      toggleRepeat: () => {
         set((state) => ({
           repeat:
             state.repeat === 'none'
@@ -300,7 +339,10 @@ export const usePlayerStore = create<PlayerState>()(
               : state.repeat === 'all'
               ? 'one'
               : 'none',
-        })),
+        }));
+        const s = get();
+        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
+      },
 
       addToQueue: (tracks) =>
         set((state) => ({
@@ -400,6 +442,27 @@ export const usePlayerStore = create<PlayerState>()(
           radioMode: false,
           radioSourceTrackId: null,
         });
+      },
+
+      loadPreferences: (prefs) => {
+        const updates: Partial<PlayerState> = {};
+        if (prefs.volume !== undefined) updates.volume = prefs.volume;
+        if (prefs.isMuted !== undefined) updates.isMuted = prefs.isMuted;
+        if (prefs.shuffle !== undefined) updates.shuffle = prefs.shuffle;
+        if (prefs.repeat !== undefined) updates.repeat = prefs.repeat;
+        if (prefs.crossfadeEnabled !== undefined) updates.crossfadeEnabled = prefs.crossfadeEnabled;
+        if (prefs.crossfadeDuration !== undefined) updates.crossfadeDuration = prefs.crossfadeDuration;
+        if (prefs.eqEnabled !== undefined) updates.eqEnabled = prefs.eqEnabled;
+        if (prefs.eqGains !== undefined) updates.eqGains = prefs.eqGains;
+        if (prefs.eqPreset !== undefined) updates.eqPreset = prefs.eqPreset;
+        set(updates);
+        // Apply volume to existing audio element
+        const { audioElement } = get();
+        const vol = updates.volume ?? get().volume;
+        const muted = updates.isMuted ?? get().isMuted;
+        if (audioElement) {
+          audioElement.volume = muted ? 0 : vol;
+        }
       },
     }),
     {
