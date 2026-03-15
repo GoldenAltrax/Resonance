@@ -293,7 +293,8 @@ class ApiClient {
   }
 
   async getAlbums() {
-    return this.request<AlbumSummary[]>('/tracks/albums');
+    const res = await this.request<{ albums: AlbumSummary[] }>('/tracks/albums');
+    return res.albums;
   }
 
   // Returns the URL for a track's cover art image (for use in <img> src).
