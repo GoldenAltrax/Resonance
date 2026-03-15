@@ -1,5 +1,5 @@
 
-export type Page = 'home' | 'library' | 'liked' | 'playlists' | 'playlist-detail' | 'search' | 'settings' | 'admin';
+export type Page = 'home' | 'library' | 'liked' | 'playlists' | 'playlist-detail' | 'search' | 'settings' | 'admin' | 'albums';
 
 export interface Song {
   id: string;

@@ -475,6 +475,7 @@ export const usePlayerStore = create<PlayerState>()(
     {
       name: 'resonance-player-settings',
       partialize: (state) => ({
+        // Audio preferences
         volume: state.volume,
         isMuted: state.isMuted,
         shuffle: state.shuffle,
@@ -484,6 +485,10 @@ export const usePlayerStore = create<PlayerState>()(
         eqEnabled: state.eqEnabled,
         eqGains: state.eqGains,
         eqPreset: state.eqPreset,
+        // Session persistence — restore last queue on next launch
+        currentTrack: state.currentTrack,
+        queue: state.queue,
+        queueIndex: state.queueIndex,
       }),
     }
   )
