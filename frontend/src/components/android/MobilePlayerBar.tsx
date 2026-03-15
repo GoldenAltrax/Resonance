@@ -1,10 +1,11 @@
-import { Play, Pause, SkipBack, SkipForward } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Loader2 } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
 
 export default function MobilePlayerBar() {
   const {
     currentTrack,
     isPlaying,
+    isLoadingAudio,
     progress,
     duration,
     play,
@@ -61,11 +62,13 @@ export default function MobilePlayerBar() {
           </button>
 
           <button
-            onClick={() => (isPlaying ? pause() : play())}
-            aria-label={isPlaying ? 'Pause' : 'Play'}
+            onClick={() => !isLoadingAudio && (isPlaying ? pause() : play())}
+            aria-label={isLoadingAudio ? 'Loading' : isPlaying ? 'Pause' : 'Play'}
             className="w-12 h-12 bg-white rounded-full flex items-center justify-center active:scale-95 transition-transform"
           >
-            {isPlaying ? (
+            {isLoadingAudio ? (
+              <Loader2 className="w-5 h-5 text-black animate-spin" />
+            ) : isPlaying ? (
               <Pause className="w-5 h-5 text-black" />
             ) : (
               <Play className="w-5 h-5 text-black ml-0.5" />
