@@ -288,37 +288,26 @@ export async function trackRoutes(app: FastifyInstance) {
       let album: string | undefined;
       let title = data.filename.replace(/\.[^/.]+$/, ''); // Default to filename
 
+      // Parse metadata + cover art in a single call
+      let coverArtPath: string | undefined;
       try {
         const metadata = await parseFile(tempFilePath);
         duration = Math.round(metadata.format.duration || 0);
 
-        if (metadata.common.title) {
-          title = metadata.common.title;
-        }
-        if (metadata.common.artist) {
-          artist = metadata.common.artist;
-        }
-        if (metadata.common.album) {
-          album = metadata.common.album;
-        }
-      } catch (err) {
-        console.warn('Failed to parse audio metadata:', err);
-      }
+        if (metadata.common.title) title = metadata.common.title;
+        if (metadata.common.artist) artist = metadata.common.artist;
+        if (metadata.common.album) album = metadata.common.album;
 
-      // Extract embedded cover art from ID3/metadata tags
-      let coverArtPath: string | undefined;
-      try {
-        const metaForCover = await parseFile(tempFilePath);
-        const picture = metaForCover.common.picture?.[0];
+        // Extract embedded cover art
+        const picture = metadata.common.picture?.[0];
         if (picture) {
-          // Derive a safe extension from the MIME type (e.g. "image/jpeg" → "jpg")
           const ext = picture.format.split('/').pop()?.replace('jpeg', 'jpg') || 'jpg';
           const coverFilename = `cover-${trackId}.${ext}`;
           await writeFile(join(IMAGES_DIR, coverFilename), picture.data);
           coverArtPath = `images/${coverFilename}`;
         }
       } catch (err) {
-        console.warn('Failed to extract cover art:', err);
+        console.warn('Failed to parse audio metadata:', err);
       }
 
       // Compress audio to 192kbps MP3
