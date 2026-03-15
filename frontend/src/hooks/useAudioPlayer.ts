@@ -300,14 +300,15 @@ export function useAudioPlayer() {
           }
         }
 
-        // Gapless: pre-fetch next track URL when 20s remain
+        // Gapless: pre-fetch next track URL when 20s remain.
+        // Skip in shuffle mode — the next track is random and can't be predicted reliably,
+        // so pre-fetching would fire a new fetch every timeupdate for a different random track.
         if (timeLeft <= 20 && timeLeft > 0) {
           const { queue, queueIndex, shuffle, repeat } = latestRef.current;
-          let nextIdx = shuffle
-            ? queue.map((_, i) => i).filter((i) => i !== queueIndex)[
-                Math.floor(Math.random() * Math.max(1, queue.length - 1))
-              ] ?? -1
-            : queueIndex + 1 < queue.length
+          if (shuffle) {
+            // do nothing — gapless not possible with shuffle
+          } else {
+          let nextIdx = queueIndex + 1 < queue.length
             ? queueIndex + 1
             : repeat === 'all'
             ? 0
@@ -338,6 +339,7 @@ export function useAudioPlayer() {
                 prefetchInProgressRef.current = null;
               });
           }
+          } // end else (not shuffle)
         }
       }
     };
@@ -545,18 +547,13 @@ export function useAudioPlayer() {
         api.revokeStreamUrl(prefetched.url);
         prefetchRef.current = null;
       }
-      // Show loading spinner for Android blob fetches only
-      const willBlob = IS_ANDROID && !import.meta.env.VITE_API_URL?.startsWith('https://');
-      if (willBlob) {
-        setLoadingAudio(true);
-        dbg.info(`Android blob fetch start: id=${currentTrack.id}`);
-      }
+      if (IS_ANDROID) setLoadingAudio(true);
       dbg.info(`getSecureStreamUrl: fetching for id=${currentTrack.id}`);
       api
         .getSecureStreamUrl(currentTrack.id)
         .then((url) => {
           dbg.info(`getSecureStreamUrl: got ${url.startsWith('blob:') ? 'blob URL' : url.substring(0, 40)}`);
-          if (url.startsWith('blob:')) setLoadingAudio(false);
+          setLoadingAudio(false);
           loadAndPlay(url);
         })
         .catch((err) => {
