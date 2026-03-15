@@ -37,6 +37,9 @@ export function useAudioPlayer() {
   const pipelineInitialized = useRef(false);
   // Incremented on every track change — stale fetches check this and discard
   const loadGenerationRef = useRef(0);
+  // Gapless playback: pre-fetched URL for the upcoming next track
+  const prefetchRef = useRef<{ trackId: string; url: string } | null>(null);
+  const prefetchInProgressRef = useRef<string | null>(null); // trackId being pre-fetched
 
   // Latest-ref: event handlers read from here to avoid stale closures
   // without causing the setup useEffect to re-run.
@@ -228,6 +231,55 @@ export function useAudioPlayer() {
       .catch(() => {});
   }, [currentTrack, isPlaying]);
 
+  // MediaSession: update metadata whenever the current track changes
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    if (!currentTrack) {
+      navigator.mediaSession.metadata = null;
+      return;
+    }
+    const artwork: MediaImage[] = [];
+    if (currentTrack.coverArt) {
+      const coverUrl = api.getTrackCoverUrl(currentTrack.coverArt);
+      artwork.push({ src: coverUrl, sizes: '512x512', type: 'image/jpeg' });
+    }
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: currentTrack.title,
+      artist: currentTrack.artist ?? '',
+      album: currentTrack.album ?? '',
+      artwork,
+    });
+  }, [currentTrack]);
+
+  // MediaSession: keep playback state in sync
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+  }, [isPlaying]);
+
+  // MediaSession: register action handlers ONCE
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+    const store = () => usePlayerStore.getState();
+    const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
+      ['play', () => store().resume()],
+      ['pause', () => store().pause()],
+      ['previoustrack', () => store().previous()],
+      ['nexttrack', () => store().next()],
+      ['seekto', (details) => {
+        if (details.seekTime != null) store().seek(details.seekTime);
+      }],
+    ];
+    for (const [action, handler] of handlers) {
+      try { navigator.mediaSession.setActionHandler(action, handler); } catch {}
+    }
+    return () => {
+      for (const [action] of handlers) {
+        try { navigator.mediaSession.setActionHandler(action, null); } catch {}
+      }
+    };
+  }, []);
+
   // Initialize audio element — runs ONCE with stable deps
   useEffect(() => {
     const audio = new Audio();
@@ -238,11 +290,54 @@ export function useAudioPlayer() {
       setProgress(audio.currentTime);
       usePlayerStore.getState().checkSleepTimer();
 
-      const { crossfadeEnabled, crossfadeDuration } = latestRef.current;
-      if (crossfadeEnabled && crossfadeDuration > 0 && audio.duration) {
+      if (audio.duration) {
         const timeLeft = audio.duration - audio.currentTime;
-        if (timeLeft <= crossfadeDuration && timeLeft > 0 && !crossfadeTimeoutRef.current) {
-          startCrossfade(timeLeft);
+
+        const { crossfadeEnabled, crossfadeDuration } = latestRef.current;
+        if (crossfadeEnabled && crossfadeDuration > 0) {
+          if (timeLeft <= crossfadeDuration && timeLeft > 0 && !crossfadeTimeoutRef.current) {
+            startCrossfade(timeLeft);
+          }
+        }
+
+        // Gapless: pre-fetch next track URL when 20s remain
+        if (timeLeft <= 20 && timeLeft > 0) {
+          const { queue, queueIndex, shuffle, repeat } = latestRef.current;
+          let nextIdx = shuffle
+            ? queue.map((_, i) => i).filter((i) => i !== queueIndex)[
+                Math.floor(Math.random() * Math.max(1, queue.length - 1))
+              ] ?? -1
+            : queueIndex + 1 < queue.length
+            ? queueIndex + 1
+            : repeat === 'all'
+            ? 0
+            : -1;
+
+          const nextTrack = nextIdx >= 0 ? queue[nextIdx] : null;
+          if (
+            nextTrack &&
+            prefetchRef.current?.trackId !== nextTrack.id &&
+            prefetchInProgressRef.current !== nextTrack.id
+          ) {
+            prefetchInProgressRef.current = nextTrack.id;
+            dbg.info(`gapless: pre-fetching next track "${nextTrack.title}" id=${nextTrack.id}`);
+            api
+              .getSecureStreamUrl(nextTrack.id)
+              .then((url) => {
+                // Discard if a different track is now being pre-fetched
+                if (prefetchInProgressRef.current !== nextTrack.id) {
+                  api.revokeStreamUrl(url);
+                  return;
+                }
+                dbg.info(`gapless: pre-fetch ready for "${nextTrack.title}"`);
+                prefetchRef.current = { trackId: nextTrack.id, url };
+                prefetchInProgressRef.current = null;
+              })
+              .catch((err) => {
+                dbg.warn(`gapless: pre-fetch failed: ${err}`);
+                prefetchInProgressRef.current = null;
+              });
+          }
         }
       }
     };
@@ -365,7 +460,7 @@ export function useAudioPlayer() {
     if (!audio || !currentTrack) return;
 
     const generation = ++loadGenerationRef.current;
-    if (IS_ANDROID) setLoadingAudio(false); // clear any stale loading state from previous track
+    setLoadingAudio(false); // clear any stale loading state from previous track
     dbg.info(`Track change: "${currentTrack.title}" id=${currentTrack.id} gen=${generation}`);
 
     crossfadeTimeoutRef.current = null;
@@ -379,6 +474,11 @@ export function useAudioPlayer() {
     if (currentBlobUrl.current) {
       api.revokeStreamUrl(currentBlobUrl.current);
       currentBlobUrl.current = null;
+    }
+
+    // Cancel any in-progress pre-fetch for a different track
+    if (prefetchInProgressRef.current && prefetchInProgressRef.current !== currentTrack.id) {
+      prefetchInProgressRef.current = null;
     }
 
     const loadAndPlay = async (url: string) => {
@@ -433,23 +533,38 @@ export function useAudioPlayer() {
       }
     };
 
-    if (IS_ANDROID) {
-      setLoadingAudio(true);
-      dbg.info(`Android blob fetch start: id=${currentTrack.id}`);
+    // Check if next track was already pre-fetched (gapless)
+    const prefetched = prefetchRef.current;
+    if (prefetched && prefetched.trackId === currentTrack.id) {
+      dbg.info(`gapless: using pre-fetched URL for "${currentTrack.title}"`);
+      prefetchRef.current = null;
+      loadAndPlay(prefetched.url);
+    } else {
+      // Invalidate any stale pre-fetch for a different track
+      if (prefetched) {
+        api.revokeStreamUrl(prefetched.url);
+        prefetchRef.current = null;
+      }
+      // Show loading spinner for Android blob fetches only
+      const willBlob = IS_ANDROID && !import.meta.env.VITE_API_URL?.startsWith('https://');
+      if (willBlob) {
+        setLoadingAudio(true);
+        dbg.info(`Android blob fetch start: id=${currentTrack.id}`);
+      }
+      dbg.info(`getSecureStreamUrl: fetching for id=${currentTrack.id}`);
+      api
+        .getSecureStreamUrl(currentTrack.id)
+        .then((url) => {
+          dbg.info(`getSecureStreamUrl: got ${url.startsWith('blob:') ? 'blob URL' : url.substring(0, 40)}`);
+          if (url.startsWith('blob:')) setLoadingAudio(false);
+          loadAndPlay(url);
+        })
+        .catch((err) => {
+          dbg.error(`getSecureStreamUrl error: ${err}`);
+          setLoadingAudio(false);
+          console.error('Failed to load audio:', err);
+        });
     }
-    dbg.info(`getSecureStreamUrl: fetching for id=${currentTrack.id}`);
-    api
-      .getSecureStreamUrl(currentTrack.id)
-      .then((blobUrl) => {
-        dbg.info(`getSecureStreamUrl: got ${blobUrl.startsWith('blob:') ? 'blob URL' : blobUrl.substring(0, 40)}`);
-        if (IS_ANDROID) setLoadingAudio(false);
-        loadAndPlay(blobUrl);
-      })
-      .catch((err) => {
-        dbg.error(`getSecureStreamUrl error: ${err}`);
-        if (IS_ANDROID) setLoadingAudio(false);
-        console.error('Failed to load audio:', err);
-      });
   }, [currentTrack, initAudioPipeline, getAudioCtx]);
 
   // Handle play/pause

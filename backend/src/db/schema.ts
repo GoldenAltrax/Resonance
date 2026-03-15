@@ -32,6 +32,7 @@ export const tracks = sqliteTable('tracks', {
   duration: integer('duration').notNull(), // in seconds
   filePath: text('file_path').notNull(),
   originalFilename: text('original_filename'), // Original filename for duplicate detection
+  coverArt: text('cover_art'), // Relative path to extracted album art (e.g. "images/cover-uuid.jpg")
   // Audio analysis fields for Radio mode (similar track matching)
   bpm: integer('bpm'), // Beats per minute (tempo)
   key: text('key'), // Musical key (e.g., "C", "Am", "F#m")

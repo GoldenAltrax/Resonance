@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Home, Library, Search, Settings, Music2, LogOut, Shield, Music, Heart } from 'lucide-react';
+import { Home, Library, Search, Settings, Music2, LogOut, Shield, Music, Heart, Disc3 } from 'lucide-react';
 import { Page, Playlist } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
 import { usePlayerStore } from '@/stores/playerStore';
@@ -54,6 +54,7 @@ const Sidebar = ({ activePage, setActivePage, playlists, onPlaylistClick }: Side
     { id: 'home', icon: Home, label: 'Home' },
     ...(isAdmin ? [{ id: 'library', icon: Music, label: 'Library' }] : []),
     { id: 'liked', icon: Heart, label: 'Liked Songs' },
+    { id: 'albums', icon: Disc3, label: 'Albums' },
     { id: 'search', icon: Search, label: 'Search' },
     { id: 'playlists', icon: Library, label: 'Playlists' },
     { id: 'settings', icon: Settings, label: 'Settings' },

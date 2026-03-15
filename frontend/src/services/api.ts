@@ -234,10 +234,18 @@ class ApiClient {
         return `stream://audio/${id}?token=${this.token}`;
       }
 
-      // Android (and any unrecognised platform): fall through to blob fetch below.
+      // Android: if the API is served over HTTPS there is no mixed-content issue,
+      // so we can use a direct ?token= URL and skip the blob round-trip entirely.
+      if (platform === 'android' && API_URL.startsWith('https://')) {
+        const url = `${API_URL}/tracks/${id}/stream?token=${encodeURIComponent(this.token)}`;
+        _dbg('info', `android https direct url: ${url}`);
+        return url;
+      }
+
+      // Android HTTP or unrecognised platform: fall through to blob fetch below.
     }
 
-    // Android Tauri + Browser: fetch with Authorization header, return local blob: URL.
+    // Android Tauri (HTTP) + Browser: fetch with Authorization header, return local blob: URL.
     const fetchUrl = `${API_URL}/tracks/${id}/stream`;
     _dbg('info', `blob fetch: GET ${fetchUrl}`);
     const response = await fetch(fetchUrl, {
@@ -282,6 +290,17 @@ class ApiClient {
     return this.request<{ message: string; analyzed: number; failed: number; total: number }>('/tracks/analyze-all', {
       method: 'POST',
     });
+  }
+
+  async getAlbums() {
+    return this.request<AlbumSummary[]>('/tracks/albums');
+  }
+
+  // Returns the URL for a track's cover art image (for use in <img> src).
+  // Falls back to undefined if the track has no cover art.
+  getTrackCoverUrl(coverArt: string): string {
+    const tokenParam = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
+    return `${API_URL}/uploads/${coverArt}${tokenParam}`;
   }
 
   // User preferences (cross-device sync)
@@ -458,12 +477,21 @@ export interface Track {
   duration: number;
   filePath: string;
   originalFilename: string | null;
+  coverArt: string | null;
   // Audio analysis fields for Radio mode
   bpm: number | null;
   key: string | null;
   energy: number | null;
   userId: string;
   createdAt: string;
+}
+
+export interface AlbumSummary {
+  album: string;
+  artist: string | null;
+  trackCount: number;
+  coverArt: string | null;
+  tracks: Track[];
 }
 
 export interface SimilarTracksResponse {

@@ -20,6 +20,7 @@ import PlaylistDetailView from '@/views/PlaylistDetailView';
 import SettingsView from '@/views/SettingsView';
 import SearchView from '@/views/SearchView';
 import AdminView from '@/views/AdminView';
+import AlbumsView from '@/views/AlbumsView';
 import PlayerBar from '@/components/player/PlayerBar';
 import { ToastContainer } from '@/components/ui/Toast';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
@@ -31,6 +32,7 @@ import { useAudioPlayer } from '@/hooks/useAudioPlayer';
 import { usePlatform } from '@/hooks/usePlatform';
 import BottomNav from '@/components/android/BottomNav';
 import MobilePlayerBar from '@/components/android/MobilePlayerBar';
+import NowPlayingScreen from '@/components/android/NowPlayingScreen';
 
 
 type AuthScreen = 'landing' | 'login' | 'signup';
@@ -41,6 +43,7 @@ const App = () => {
   const [activePage, setActivePage] = useState<Page>('home');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+  const [showNowPlaying, setShowNowPlaying] = useState(false);
 
   const { isAuthenticated, token, user, checkAuth } = useAuthStore();
   const { playlists, fetchPlaylists } = usePlaylistStore();
@@ -162,6 +165,8 @@ const App = () => {
         return <SearchView />;
       case 'settings':
         return <SettingsView />;
+      case 'albums':
+        return <AlbumsView />;
       case 'admin':
         return <AdminView />;
       default:
@@ -203,8 +208,11 @@ const App = () => {
               </ErrorBoundary>
             </div>
           </main>
-          <MobilePlayerBar />
+          <MobilePlayerBar onOpenNowPlaying={() => setShowNowPlaying(true)} />
           <BottomNav activePage={activePage} onNavigate={setActivePage} />
+          {showNowPlaying && (
+            <NowPlayingScreen onClose={() => setShowNowPlaying(false)} />
+          )}
           <ToastContainer />
         </div>
       </ErrorBoundary>

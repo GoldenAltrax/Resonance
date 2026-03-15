@@ -113,3 +113,4 @@ jobs:
           name: resonance-android-${{ github.ref_name }}
           path: src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
           if-no-files-found: warn
+

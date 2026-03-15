@@ -1,4 +1,4 @@
-import { Home, Library, Search, ListMusic, Settings, Shield } from 'lucide-react';
+import { Home, Library, Search, ListMusic, Settings, Shield, Disc3 } from 'lucide-react';
 import { Page } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -16,6 +16,7 @@ export default function BottomNav({ activePage, onNavigate }: Props) {
     { id: 'library', label: 'Library', icon: Library },
     { id: 'search', label: 'Search', icon: Search },
     { id: 'playlists', label: 'Playlists', icon: ListMusic },
+    { id: 'albums' as Page, label: 'Albums', icon: Disc3 },
     ...(isAdmin ? [{ id: 'admin' as Page, label: 'Admin', icon: Shield }] : []),
     { id: 'settings', label: 'Settings', icon: Settings },
   ];

@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
 import { createWriteStream } from 'fs';
-import { mkdir, unlink, stat } from 'fs/promises';
+import { mkdir, unlink, stat, writeFile } from 'fs/promises';
 import { pipeline } from 'stream/promises';
 import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -34,10 +34,12 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const UPLOADS_DIR = resolve(__dirname, '..', '..', 'uploads', 'audio');
 const UPLOADS_BASE = resolve(__dirname, '..', '..', 'uploads');
 const TEMP_DIR = resolve(__dirname, '..', '..', 'uploads', 'temp');
+const IMAGES_DIR = resolve(__dirname, '..', '..', 'uploads', 'images');
 
 // Ensure directories exist
 await mkdir(UPLOADS_DIR, { recursive: true });
 await mkdir(TEMP_DIR, { recursive: true });
+await mkdir(IMAGES_DIR, { recursive: true });
 
 // Resolve path from stored filePath (e.g., "audio/uuid.mp3")
 function resolveStoredFilePath(storedPath: string): string | null {
@@ -177,6 +179,52 @@ export function areEnergiesSimilar(energy1: number | null, energy2: number | nul
 }
 
 export async function trackRoutes(app: FastifyInstance) {
+  // Get albums (grouped by album tag) — ANY AUTHENTICATED USER
+  // NOTE: registered before /:id so Fastify's static-path priority applies
+  app.get('/albums', {
+    preHandler: authMiddleware,
+  }, async (_request: FastifyRequest, reply: FastifyReply) => {
+    const allTracks = await db.query.tracks.findMany({
+      orderBy: (tracks, { asc }) => [asc(tracks.album), asc(tracks.title)],
+    });
+
+    type AlbumEntry = {
+      name: string;
+      artist: string | null;
+      coverArt: string | null;
+      trackCount: number;
+      tracks: typeof allTracks;
+    };
+
+    const albumMap = new Map<string, AlbumEntry>();
+
+    for (const track of allTracks) {
+      const key = (track.album || '').trim() || 'Unknown Album';
+      if (!albumMap.has(key)) {
+        albumMap.set(key, {
+          name: key,
+          artist: track.artist,
+          coverArt: track.coverArt ?? null,
+          trackCount: 0,
+          tracks: [],
+        });
+      }
+      const entry = albumMap.get(key)!;
+      entry.trackCount++;
+      entry.tracks.push(track);
+      // Use the first cover art we find for this album
+      if (!entry.coverArt && track.coverArt) {
+        entry.coverArt = track.coverArt;
+      }
+    }
+
+    const albums = Array.from(albumMap.values()).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+
+    return reply.send({ albums });
+  });
+
   // Get all tracks - ADMIN ONLY (for Library view)
   app.get('/', {
     preHandler: adminMiddleware,
@@ -257,6 +305,22 @@ export async function trackRoutes(app: FastifyInstance) {
         console.warn('Failed to parse audio metadata:', err);
       }
 
+      // Extract embedded cover art from ID3/metadata tags
+      let coverArtPath: string | undefined;
+      try {
+        const metaForCover = await parseFile(tempFilePath);
+        const picture = metaForCover.common.picture?.[0];
+        if (picture) {
+          // Derive a safe extension from the MIME type (e.g. "image/jpeg" → "jpg")
+          const ext = picture.format.split('/').pop()?.replace('jpeg', 'jpg') || 'jpg';
+          const coverFilename = `cover-${trackId}.${ext}`;
+          await writeFile(join(IMAGES_DIR, coverFilename), picture.data);
+          coverArtPath = `images/${coverFilename}`;
+        }
+      } catch (err) {
+        console.warn('Failed to extract cover art:', err);
+      }
+
       // Compress audio to 192kbps MP3
       const isAlreadyCompressedMp3 = data.mimetype === 'audio/mpeg' || data.mimetype === 'audio/mp3';
 
@@ -305,10 +369,11 @@ export async function trackRoutes(app: FastifyInstance) {
         duration,
         filePath: `audio/${finalFilename}`,
         originalFilename,
+        coverArt: coverArtPath,
         bpm: analysis.bpm,
         key: analysis.key,
         energy: analysis.energy,
-        userId, // Track who uploaded (for audit purposes)
+        userId,
       });
 
       const track = await db.query.tracks.findFirst({
@@ -344,21 +409,46 @@ export async function trackRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Track not found' });
     }
 
-    // Delete file from filesystem (secure path resolution)
+    // Delete audio file from filesystem (secure path resolution)
     try {
       const filePath = resolveStoredFilePath(track.filePath);
       if (filePath) {
         await unlink(filePath);
-      } else {
-        console.warn('Invalid file path for track deletion:', track.filePath);
       }
     } catch (err) {
       console.warn('Failed to delete track file:', err);
     }
 
+    // Delete cover art if present
+    if (track.coverArt) {
+      try {
+        const coverPath = resolveStoredFilePath(track.coverArt);
+        if (coverPath) await unlink(coverPath);
+      } catch {
+        // Ignore — cover art may not exist
+      }
+    }
+
     await db.delete(tracks).where(eq(tracks.id, id));
 
     return reply.status(204).send();
+  });
+
+  // Serve cover art for a track - ANY AUTHENTICATED USER
+  app.get<{ Params: { id: string } }>('/:id/cover', {
+    preHandler: authMiddleware,
+  }, async (request, reply) => {
+    const { id } = request.params;
+
+    const track = await db.query.tracks.findFirst({
+      where: eq(tracks.id, id),
+    });
+
+    if (!track || !track.coverArt) {
+      return reply.status(404).send({ error: 'No cover art' });
+    }
+
+    return reply.redirect(`/uploads/${track.coverArt}`);
   });
 
   // Stream track audio - ANY AUTHENTICATED USER
