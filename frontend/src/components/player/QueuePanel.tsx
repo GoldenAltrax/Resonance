@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { X, ListMusic, Trash2, GripVertical } from 'lucide-react';
 import {
   DndContext,
@@ -145,6 +145,7 @@ const QueuePanel = () => {
   } = usePlayerStore();
   const [isClosing, setIsClosing] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current); }, []);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {

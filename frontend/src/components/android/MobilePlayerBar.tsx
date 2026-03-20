@@ -1,4 +1,5 @@
-import { Play, Pause, SkipBack, SkipForward, Loader2, Music } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Loader2 } from 'lucide-react';
+import { AlbumArt } from '@/components/ui/AlbumArt';
 import { usePlayerStore } from '@/stores/playerStore';
 import { api } from '@/services/api';
 
@@ -44,17 +45,13 @@ export default function MobilePlayerBar({ onOpenNowPlaying }: Props) {
           className="w-10 h-10 bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0 active:scale-95 transition-transform ring-1 ring-white/5 shadow-md"
           aria-label="Open now playing"
         >
-          {coverUrl ? (
-            <img
-              src={coverUrl}
-              alt={currentTrack.album ?? currentTrack.title}
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center">
-              <Music className="w-4 h-4 text-zinc-600" />
-            </div>
-          )}
+          <AlbumArt
+            src={coverUrl}
+            alt={currentTrack.album ?? currentTrack.title}
+            artist={currentTrack.artist}
+            title={currentTrack.title}
+            iconSize="w-4 h-4"
+          />
         </button>
 
         {/* Title + artist */}

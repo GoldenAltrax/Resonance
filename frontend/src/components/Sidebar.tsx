@@ -125,7 +125,7 @@ const Sidebar = ({ activePage, setActivePage, playlists, onPlaylistClick }: Side
       </div>
 
       {/* Footer */}
-      <div className={`px-3 pt-3 pb-4 border-t border-zinc-800/40 space-y-0.5 ${currentTrack ? 'pb-28' : ''}`}>
+      <div className={`px-3 pt-3 border-t border-zinc-800/40 space-y-0.5 ${currentTrack ? 'pb-28' : 'pb-4'}`}>
         {isAdmin && (
           <button
             onClick={() => setActivePage('admin')}
