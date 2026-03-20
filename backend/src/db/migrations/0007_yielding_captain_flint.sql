@@ -7,6 +7,3 @@ CREATE TABLE `track_skips` (
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`track_id`) REFERENCES `tracks`(`id`) ON UPDATE no action ON DELETE cascade
 );
---> statement-breakpoint
-ALTER TABLE `tracks` ADD `cover_art` text;--> statement-breakpoint
-ALTER TABLE `users` ADD `preferences` text;
