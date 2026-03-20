@@ -429,14 +429,12 @@ export const usePlayerStore = create<PlayerState>()(
         }),
 
       clearQueue: () =>
-        set({
-          queue: [],
-          queueIndex: -1,
-          currentTrack: null,
-          isPlaying: false,
-          progress: 0,
-          duration: 0,
-        }),
+        set((state) => ({
+          queue: state.currentTrack ? [state.currentTrack] : [],
+          queueIndex: state.currentTrack ? 0 : -1,
+          radioMode: false,
+          radioSourceTrackId: null,
+        })),
 
       setSleepTimer: (minutes) => {
         if (minutes === null) {

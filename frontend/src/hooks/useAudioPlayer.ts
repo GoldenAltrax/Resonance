@@ -80,6 +80,7 @@ export function useAudioPlayer() {
     setDuration,
     setLoadingAudio,
   } = usePlayerStore();
+  const isMuted = usePlayerStore((s) => s.isMuted);
 
   // Keep latestRef in sync on every render
   useEffect(() => {
@@ -173,14 +174,15 @@ export function useAudioPlayer() {
     });
   }, [eqEnabled, eqGains]);
 
-  // Volume — GainNode when pipeline is active, audio.volume as fallback
+  // Volume/mute — GainNode when pipeline is active, audio.volume as fallback
   useEffect(() => {
+    const effectiveVolume = isMuted ? 0 : volume;
     if (gainNodeRef.current && !crossfadeTimeoutRef.current) {
-      gainNodeRef.current.gain.value = volume;
+      gainNodeRef.current.gain.value = effectiveVolume;
     } else if (audioRef.current && !sourceNodeRef.current) {
-      audioRef.current.volume = volume;
+      audioRef.current.volume = effectiveVolume;
     }
-  }, [volume]);
+  }, [volume, isMuted]);
 
   // Tauri tray + global media shortcuts
   useEffect(() => {

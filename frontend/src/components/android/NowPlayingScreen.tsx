@@ -9,9 +9,9 @@ import {
   Repeat,
   Repeat1,
   Loader2,
-  Music,
   Heart,
 } from 'lucide-react';
+import { AlbumArt } from '@/components/ui/AlbumArt';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useFavoritesStore } from '@/stores/favoritesStore';
 import { api } from '@/services/api';
@@ -99,17 +99,13 @@ export default function NowPlayingScreen({ onClose }: Props) {
       {/* Album art */}
       <div className="flex-1 flex items-center justify-center px-8 pb-2">
         <div className="w-full aspect-square max-w-sm bg-zinc-900 rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/5">
-          {coverUrl ? (
-            <img
-              src={coverUrl}
-              alt={currentTrack.album ?? currentTrack.title}
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center">
-              <Music className="w-20 h-20 text-zinc-800" />
-            </div>
-          )}
+          <AlbumArt
+            src={coverUrl}
+            alt={currentTrack.album ?? currentTrack.title}
+            artist={currentTrack.artist}
+            title={currentTrack.title}
+            iconSize="w-20 h-20"
+          />
         </div>
       </div>
 
