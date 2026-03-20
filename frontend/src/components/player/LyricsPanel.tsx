@@ -12,6 +12,7 @@ const LyricsPanel = () => {
   const [isClosing, setIsClosing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const activeLineRef = useRef<HTMLButtonElement>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Fetch lyrics when track changes
   useEffect(() => {
@@ -69,7 +70,8 @@ const LyricsPanel = () => {
   // Handle close with animation
   const handleClose = () => {
     setIsClosing(true);
-    setTimeout(() => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = setTimeout(() => {
       toggleLyrics();
       setIsClosing(false);
     }, 300);

@@ -53,7 +53,13 @@ export function useAudioPlayer() {
     volume: 0.7,
     eqEnabled: false,
     eqGains: Array(10).fill(0) as number[],
+    radioMode: false,
+    radioSourceTrackId: null as string | null,
   });
+
+  // Radio auto-refill throttle refs
+  const lastRadioRefillRef = useRef(0);
+  const radioRefillInProgressRef = useRef(false);
 
   const {
     currentTrack,
@@ -67,6 +73,8 @@ export function useAudioPlayer() {
     eqGains,
     crossfadeEnabled,
     crossfadeDuration,
+    radioMode,
+    radioSourceTrackId,
     setAudioElement,
     setProgress,
     setDuration,
@@ -85,6 +93,8 @@ export function useAudioPlayer() {
       volume,
       eqEnabled,
       eqGains,
+      radioMode,
+      radioSourceTrackId,
     };
   });
 
@@ -340,6 +350,33 @@ export function useAudioPlayer() {
               });
           }
           } // end else (not shuffle)
+        }
+
+        // C3: Radio auto-refill — when ≤3 tracks remain, fetch more similar tracks
+        const nowMs = Date.now();
+        const { radioMode, radioSourceTrackId, queue: rQueue, queueIndex: rIdx } = latestRef.current;
+        if (
+          radioMode &&
+          radioSourceTrackId &&
+          !radioRefillInProgressRef.current &&
+          nowMs - lastRadioRefillRef.current > 5000
+        ) {
+          const remaining = rQueue.length - (rIdx + 1);
+          if (remaining <= 3) {
+            lastRadioRefillRef.current = nowMs;
+            radioRefillInProgressRef.current = true;
+            const excludeIds = rQueue.map(t => t.id).join(',');
+            dbg.info(`radio refill: ${remaining} tracks left, fetching more from source=${radioSourceTrackId}`);
+            api.getSimilarTracks(radioSourceTrackId, { limit: 20, excludeIds })
+              .then(({ similarTracks }) => {
+                if (similarTracks.length > 0) {
+                  usePlayerStore.getState().addToQueue(similarTracks);
+                  dbg.info(`radio refill: appended ${similarTracks.length} tracks`);
+                }
+              })
+              .catch((err) => dbg.warn(`radio refill failed: ${err}`))
+              .finally(() => { radioRefillInProgressRef.current = false; });
+          }
         }
       }
     };

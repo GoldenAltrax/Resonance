@@ -50,6 +50,13 @@
       "when": 1735500000000,
       "tag": "0006_add_performance_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1774023813868,
+      "tag": "0007_yielding_captain_flint",
+      "breakpoints": true
     }
   ]
 }

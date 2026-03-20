@@ -23,6 +23,7 @@ import {
 import { usePlayerStore } from '@/stores/playerStore';
 import { formatTime } from '@/hooks/useAudioPlayer';
 import { useFavoritesStore } from '@/stores/favoritesStore';
+import { api } from '@/services/api';
 import LyricsPanel from './LyricsPanel';
 import QueuePanel from './QueuePanel';
 import EqualizerPanel from './EqualizerPanel';
@@ -52,6 +53,7 @@ export const PlayerBar = () => {
     showDownloadPanel,
     showEqualizer,
     radioMode,
+    radioAutoStarted,
     sleepTimerEnd,
     sleepTimerMinutes,
     play,
@@ -77,8 +79,6 @@ export const PlayerBar = () => {
   const [showRadioInfo, setShowRadioInfo] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState<string | null>(null);
 
-  // Check sleep timer and update remaining time display
-  // Note: checkSleepTimer is stable from the store, so we use a ref to avoid interval recreations
   const checkSleepTimerRef = React.useRef(checkSleepTimer);
   checkSleepTimerRef.current = checkSleepTimer;
 
@@ -87,7 +87,6 @@ export const PlayerBar = () => {
       setTimeRemaining(null);
       return;
     }
-
     const interval = setInterval(() => {
       checkSleepTimerRef.current();
       const remaining = sleepTimerEnd - Date.now();
@@ -99,15 +98,16 @@ export const PlayerBar = () => {
         setTimeRemaining(`${mins}:${secs.toString().padStart(2, '0')}`);
       }
     }, 1000);
-
     return () => clearInterval(interval);
   }, [sleepTimerEnd]);
 
-  if (!currentTrack) {
-    return null;
-  }
+  if (!currentTrack) return null;
 
   const isCurrentFavorited = isFavorited(currentTrack.id);
+  const progressPct = (progress / (duration || 1)) * 100;
+  const coverUrl = currentTrack.coverArt
+    ? api.getTrackCoverUrl(currentTrack.coverArt)
+    : null;
 
   const handleProgressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     seek(parseFloat(e.target.value));
@@ -118,70 +118,77 @@ export const PlayerBar = () => {
   };
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 h-24 bg-[#0d0d0d] border-t border-zinc-800/50 px-4 flex items-center z-50">
-      {/* Track Info */}
-      <div className="flex items-center gap-4 w-1/4 min-w-[200px]">
-        <div className="w-14 h-14 bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0">
-          <img
-            src={`https://picsum.photos/seed/${currentTrack.id}/100/100`}
-            alt={currentTrack.title}
-            loading="lazy"
-            decoding="async"
-            className="w-full h-full object-cover"
-          />
+    <div className="fixed bottom-0 left-0 right-0 h-[88px] bg-[#0c0c0c]/95 backdrop-blur-md border-t border-zinc-800/50 px-4 flex items-center z-50">
+      {/* Radio auto-start notification */}
+      {radioAutoStarted && (
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 flex items-center gap-2 px-4 py-2 bg-zinc-800/90 backdrop-blur-md border border-zinc-700/50 rounded-full text-xs text-zinc-300 shadow-xl animate-slide-up pointer-events-none">
+          <Radio className="w-3 h-3 text-green-400 animate-pulse-gentle" />
+          Continuing with similar tracks…
         </div>
-        <div className="truncate flex-1 min-w-0">
-          <p className="text-sm font-medium text-white truncate">
-            {currentTrack.title}
-          </p>
-          <p className="text-xs text-zinc-500 truncate">
-            {currentTrack.artist || 'Unknown Artist'}
-          </p>
+      )}
+
+      {/* Track Info */}
+      <div className="flex items-center gap-3 w-1/4 min-w-[190px]">
+        <div className="w-13 h-13 w-[52px] h-[52px] bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0 ring-1 ring-white/5 shadow-lg">
+          {coverUrl ? (
+            <img
+              src={coverUrl}
+              alt={currentTrack.title}
+              loading="lazy"
+              decoding="async"
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center">
+              <svg className="w-5 h-5 text-zinc-600" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+              </svg>
+            </div>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-white truncate leading-tight">{currentTrack.title}</p>
+          <p className="text-xs text-zinc-500 truncate mt-0.5">{currentTrack.artist || 'Unknown Artist'}</p>
         </div>
         <button
           onClick={() => toggleFavorite(currentTrack)}
           aria-label={isCurrentFavorited ? 'Remove from Liked Songs' : 'Add to Liked Songs'}
-          className={`flex-shrink-0 transition-all duration-200 hover:scale-110 ${
-            isCurrentFavorited
-              ? 'text-pink-500 hover:text-pink-400'
-              : 'text-zinc-500 hover:text-pink-500'
+          className={`flex-shrink-0 transition-all duration-200 hover:scale-110 active:scale-95 ${
+            isCurrentFavorited ? 'text-pink-500' : 'text-zinc-600 hover:text-pink-500'
           }`}
         >
-          <Heart className={`w-5 h-5 ${isCurrentFavorited ? 'fill-current' : ''}`} />
+          <Heart className={`w-4 h-4 ${isCurrentFavorited ? 'fill-current' : ''}`} />
         </button>
       </div>
 
-      {/* Playback Controls */}
-      <div className="flex-1 flex flex-col items-center justify-center gap-2 max-w-2xl mx-auto">
-        <div className="flex items-center gap-6">
-          {/* Radio Mode Indicator */}
+      {/* Center — Playback Controls + Progress */}
+      <div className="flex-1 flex flex-col items-center justify-center gap-2 max-w-xl mx-auto">
+        <div className="flex items-center gap-5">
+          {/* Radio mode indicator */}
           {radioMode ? (
-            <div className="relative">
-              <button
-                onClick={stopRadio}
-                aria-label="Stop Radio mode"
-                className="flex items-center gap-1 text-green-400 hover:text-green-300 transition-colors"
-              >
-                <Radio className="w-4 h-4 animate-pulse" />
-                <span className="text-[10px] font-medium">RADIO</span>
-                <X className="w-3 h-3" />
-              </button>
-            </div>
+            <button
+              onClick={stopRadio}
+              aria-label="Stop Radio mode"
+              className="flex items-center gap-1.5 text-green-400 hover:text-green-300 transition-colors"
+            >
+              <Radio className="w-3.5 h-3.5 animate-pulse-gentle" />
+              <span className="text-[10px] font-semibold tracking-wider">RADIO</span>
+              <X className="w-3 h-3 opacity-60" />
+            </button>
           ) : (
             <div className="relative">
               <button
                 onClick={() => setShowRadioInfo(true)}
                 aria-label="Radio mode info"
-                className="text-zinc-500 hover:text-white transition-colors"
+                className="text-zinc-600 hover:text-zinc-400 transition-colors"
               >
-                <Radio className="w-4 h-4" />
+                <Radio className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={() => setShowRadioInfo(true)}
-                className="absolute -top-1 -right-1 w-3 h-3 bg-zinc-700 rounded-full flex items-center justify-center hover:bg-zinc-600 transition-colors"
-                aria-label="What is Radio mode?"
+                className="absolute -top-1 -right-1 w-3 h-3 bg-zinc-800 rounded-full flex items-center justify-center hover:bg-zinc-700 transition-colors"
               >
-                <Info className="w-2 h-2 text-zinc-400" />
+                <Info className="w-2 h-2 text-zinc-500" />
               </button>
             </div>
           )}
@@ -191,8 +198,8 @@ export const PlayerBar = () => {
             aria-label={shuffle ? 'Disable shuffle' : 'Enable shuffle'}
             aria-pressed={shuffle}
             disabled={radioMode}
-            className={`transition-colors ${
-              radioMode ? 'text-zinc-600 cursor-not-allowed' : shuffle ? 'text-white' : 'text-zinc-500 hover:text-white'
+            className={`transition-colors duration-150 ${
+              radioMode ? 'text-zinc-700 cursor-not-allowed' : shuffle ? 'text-white' : 'text-zinc-500 hover:text-zinc-200'
             }`}
           >
             <Shuffle className="w-4 h-4" />
@@ -201,7 +208,7 @@ export const PlayerBar = () => {
           <button
             onClick={previous}
             aria-label="Previous track"
-            className="text-zinc-400 hover:text-white transition-colors"
+            className="text-zinc-400 hover:text-white transition-colors duration-150 hover:scale-105 active:scale-95"
           >
             <SkipBack className="w-5 h-5" />
           </button>
@@ -209,43 +216,37 @@ export const PlayerBar = () => {
           <button
             onClick={() => (isPlaying ? pause() : play())}
             aria-label={isPlaying ? 'Pause' : 'Play'}
-            className="w-10 h-10 bg-white hover:scale-105 rounded-full flex items-center justify-center transition-transform"
+            className="w-9 h-9 bg-white rounded-full flex items-center justify-center transition-all duration-150 hover:scale-105 active:scale-95 shadow-glow-white hover:shadow-[0_0_24px_rgba(255,255,255,0.2)]"
           >
             {isPlaying ? (
-              <Pause className="w-5 h-5 text-black" />
+              <Pause className="w-4 h-4 text-black" />
             ) : (
-              <Play className="w-5 h-5 text-black ml-0.5" />
+              <Play className="w-4 h-4 text-black ml-0.5" />
             )}
           </button>
 
           <button
             onClick={next}
             aria-label="Next track"
-            className="text-zinc-400 hover:text-white transition-colors"
+            className="text-zinc-400 hover:text-white transition-colors duration-150 hover:scale-105 active:scale-95"
           >
             <SkipForward className="w-5 h-5" />
           </button>
 
           <button
             onClick={toggleRepeat}
-            aria-label={`Repeat: ${repeat === 'none' ? 'off' : repeat === 'all' ? 'all' : 'one'}`}
-            className={`transition-colors ${
-              repeat !== 'none' ? 'text-white' : 'text-zinc-500 hover:text-white'
+            aria-label={`Repeat: ${repeat}`}
+            className={`transition-colors duration-150 ${
+              repeat !== 'none' ? 'text-white' : 'text-zinc-500 hover:text-zinc-200'
             }`}
           >
-            {repeat === 'one' ? (
-              <Repeat1 className="w-4 h-4" />
-            ) : (
-              <Repeat className="w-4 h-4" />
-            )}
+            {repeat === 'one' ? <Repeat1 className="w-4 h-4" /> : <Repeat className="w-4 h-4" />}
           </button>
         </div>
 
         {/* Progress Bar */}
-        <div className="w-full flex items-center gap-2">
-          <span className="text-xs text-zinc-500 w-10 text-right tabular-nums">
-            {formatTime(progress)}
-          </span>
+        <div className="w-full flex items-center gap-2.5">
+          <span className="text-[11px] text-zinc-600 w-9 text-right tabular-nums">{formatTime(progress)}</span>
           <div className="flex-1 relative group">
             <input
               type="range"
@@ -257,81 +258,60 @@ export const PlayerBar = () => {
               aria-valuemin={0}
               aria-valuemax={duration || 100}
               aria-valuenow={progress}
-              aria-valuetext={`${formatTime(progress)} of ${formatTime(duration)}`}
-              className="w-full h-1 bg-zinc-700 rounded-full appearance-none cursor-pointer
-                [&::-webkit-slider-thumb]:appearance-none
-                [&::-webkit-slider-thumb]:w-3
-                [&::-webkit-slider-thumb]:h-3
-                [&::-webkit-slider-thumb]:rounded-full
-                [&::-webkit-slider-thumb]:bg-white
-                [&::-webkit-slider-thumb]:opacity-0
-                [&::-webkit-slider-thumb]:group-hover:opacity-100
-                [&::-webkit-slider-thumb]:transition-opacity"
+              className="range-slider w-full"
               style={{
-                background: `linear-gradient(to right, white ${
-                  (progress / (duration || 1)) * 100
-                }%, rgb(63 63 70) ${(progress / (duration || 1)) * 100}%)`,
+                background: `linear-gradient(to right, white ${progressPct}%, rgb(39 39 42) ${progressPct}%)`,
               }}
             />
           </div>
-          <span className="text-xs text-zinc-500 w-10 tabular-nums">
-            {formatTime(duration)}
-          </span>
+          <span className="text-[11px] text-zinc-600 w-9 tabular-nums">{formatTime(duration)}</span>
         </div>
       </div>
 
-      {/* Volume Control & Lyrics */}
-      <div className="flex items-center gap-3 w-1/4 justify-end min-w-[180px]">
+      {/* Right — Volume & Panels */}
+      <div className="flex items-center gap-3.5 w-1/4 justify-end min-w-[180px]">
         {/* Sleep Timer */}
         <div className="relative">
           <button
             onClick={() => setShowSleepMenu(!showSleepMenu)}
-            aria-label={sleepTimerEnd ? `Sleep timer: ${timeRemaining} remaining` : 'Set sleep timer'}
+            aria-label={sleepTimerEnd ? `Sleep timer: ${timeRemaining}` : 'Set sleep timer'}
             className={`transition-colors flex items-center gap-1 ${
-              sleepTimerEnd ? 'text-purple-400' : 'text-zinc-400 hover:text-white'
+              sleepTimerEnd ? 'text-purple-400' : 'text-zinc-500 hover:text-zinc-200'
             }`}
           >
-            <Moon className="w-5 h-5" />
+            <Moon className="w-4 h-4" />
             {timeRemaining && (
-              <span className="text-[10px] font-medium text-purple-400 tabular-nums">
-                {timeRemaining}
-              </span>
+              <span className="text-[10px] font-medium text-purple-400 tabular-nums">{timeRemaining}</span>
             )}
           </button>
 
           {showSleepMenu && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setShowSleepMenu(false)} />
-              <div className="absolute bottom-full right-0 mb-2 w-44 bg-[#1a1a1a] border border-zinc-800 rounded-xl shadow-xl z-50 overflow-hidden py-1">
-                <div className="px-4 py-2 text-xs text-zinc-500 uppercase tracking-wider border-b border-zinc-800">
+              <div className="absolute bottom-full right-0 mb-2 w-44 bg-[#161616] border border-zinc-800/80 rounded-xl shadow-2xl z-50 overflow-hidden py-1 animate-scale-in">
+                <div className="px-4 py-2 text-[10px] text-zinc-600 uppercase tracking-wider border-b border-zinc-800/50">
                   Sleep Timer
                 </div>
                 {SLEEP_TIMER_OPTIONS.map((option) => (
                   <button
                     key={option.value}
-                    onClick={() => {
-                      setSleepTimer(option.value);
-                      setShowSleepMenu(false);
-                    }}
-                    className={`w-full flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
+                    onClick={() => { setSleepTimer(option.value); setShowSleepMenu(false); }}
+                    className={`w-full flex items-center justify-between px-4 py-2 text-sm transition-colors ${
                       sleepTimerMinutes === option.value
-                        ? 'text-purple-400 bg-purple-900/20'
-                        : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+                        ? 'text-purple-400 bg-purple-900/15'
+                        : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-white'
                     }`}
                   >
                     {option.label}
-                    {sleepTimerMinutes === option.value && <Check className="w-4 h-4" />}
+                    {sleepTimerMinutes === option.value && <Check className="w-3.5 h-3.5" />}
                   </button>
                 ))}
                 {sleepTimerEnd && (
                   <button
-                    onClick={() => {
-                      setSleepTimer(null);
-                      setShowSleepMenu(false);
-                    }}
-                    className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-red-400 hover:bg-red-900/20 transition-colors border-t border-zinc-800"
+                    onClick={() => { setSleepTimer(null); setShowSleepMenu(false); }}
+                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-400 hover:bg-red-900/15 transition-colors border-t border-zinc-800/50"
                   >
-                    Turn off timer
+                    Turn off
                   </button>
                 )}
               </div>
@@ -339,58 +319,32 @@ export const PlayerBar = () => {
           )}
         </div>
 
-        <button
-          onClick={toggleEqualizer}
-          aria-label={showEqualizer ? 'Hide equalizer' : 'Show equalizer'}
-          aria-expanded={showEqualizer}
-          className={`transition-colors ${
-            showEqualizer ? 'text-white' : 'text-zinc-400 hover:text-white'
-          }`}
-        >
-          <SlidersHorizontal className="w-5 h-5" />
-        </button>
-        <button
-          onClick={toggleDownloadPanel}
-          aria-label={showDownloadPanel ? 'Hide downloads' : 'Show downloads'}
-          aria-expanded={showDownloadPanel}
-          className={`transition-colors ${
-            showDownloadPanel ? 'text-white' : 'text-zinc-400 hover:text-white'
-          }`}
-        >
-          <CloudDownload className="w-5 h-5" />
-        </button>
-        <button
-          onClick={toggleQueue}
-          aria-label={showQueue ? 'Hide queue' : 'Show queue'}
-          aria-expanded={showQueue}
-          className={`transition-colors ${
-            showQueue ? 'text-white' : 'text-zinc-400 hover:text-white'
-          }`}
-        >
-          <ListMusic className="w-5 h-5" />
-        </button>
-        <button
-          onClick={toggleLyrics}
-          aria-label={showLyrics ? 'Hide lyrics' : 'Show lyrics'}
-          aria-expanded={showLyrics}
-          className={`transition-colors ${
-            showLyrics ? 'text-white' : 'text-zinc-400 hover:text-white'
-          }`}
-        >
-          <Mic2 className="w-5 h-5" />
-        </button>
+        {/* Icon buttons group */}
+        {[
+          { onClick: toggleEqualizer, active: showEqualizer, icon: SlidersHorizontal, label: showEqualizer ? 'Hide EQ' : 'Show EQ' },
+          { onClick: toggleDownloadPanel, active: showDownloadPanel, icon: CloudDownload, label: 'Downloads' },
+          { onClick: toggleQueue, active: showQueue, icon: ListMusic, label: showQueue ? 'Hide queue' : 'Show queue' },
+          { onClick: toggleLyrics, active: showLyrics, icon: Mic2, label: showLyrics ? 'Hide lyrics' : 'Show lyrics' },
+        ].map(({ onClick, active, icon: Icon, label }) => (
+          <button
+            key={label}
+            onClick={onClick}
+            aria-label={label}
+            className={`transition-colors duration-150 ${active ? 'text-white' : 'text-zinc-500 hover:text-zinc-200'}`}
+          >
+            <Icon className="w-4 h-4" />
+          </button>
+        ))}
+
+        {/* Volume */}
         <button
           onClick={toggleMute}
           aria-label={isMuted || volume === 0 ? 'Unmute' : 'Mute'}
-          className="text-zinc-400 hover:text-white transition-colors"
+          className="text-zinc-500 hover:text-zinc-200 transition-colors duration-150"
         >
-          {isMuted || volume === 0 ? (
-            <VolumeX className="w-5 h-5" />
-          ) : (
-            <Volume2 className="w-5 h-5" />
-          )}
+          {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
         </button>
-        <div className="w-24 relative group">
+        <div className="w-20 relative">
           <input
             type="range"
             min="0"
@@ -402,20 +356,9 @@ export const PlayerBar = () => {
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={Math.round(volume * 100)}
-            aria-valuetext={`${Math.round(volume * 100)}%`}
-            className="w-full h-1 bg-zinc-700 rounded-full appearance-none cursor-pointer
-              [&::-webkit-slider-thumb]:appearance-none
-              [&::-webkit-slider-thumb]:w-3
-              [&::-webkit-slider-thumb]:h-3
-              [&::-webkit-slider-thumb]:rounded-full
-              [&::-webkit-slider-thumb]:bg-white
-              [&::-webkit-slider-thumb]:opacity-0
-              [&::-webkit-slider-thumb]:group-hover:opacity-100
-              [&::-webkit-slider-thumb]:transition-opacity"
+            className="range-slider w-full"
             style={{
-              background: `linear-gradient(to right, white ${
-                volume * 100
-              }%, rgb(63 63 70) ${volume * 100}%)`,
+              background: `linear-gradient(to right, rgb(161 161 170) ${volume * 100}%, rgb(39 39 42) ${volume * 100}%)`,
             }}
           />
         </div>
@@ -430,48 +373,38 @@ export const PlayerBar = () => {
       {/* Radio Info Modal */}
       {showRadioInfo && (
         <>
-          <div
-            className="fixed inset-0 bg-black/60 z-50"
-            onClick={() => setShowRadioInfo(false)}
-          />
-          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] max-w-[90vw] bg-[#1a1a1a] border border-zinc-800 rounded-2xl shadow-2xl z-50 overflow-hidden">
-            <div className="flex items-center justify-between p-4 border-b border-zinc-800">
-              <div className="flex items-center gap-2">
-                <Radio className="w-5 h-5 text-green-400" />
-                <h3 className="text-lg font-semibold text-white">Radio Mode</h3>
+          <div className="fixed inset-0 bg-black/50 z-50 backdrop-blur-sm" onClick={() => setShowRadioInfo(false)} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[380px] max-w-[90vw] bg-[#141414] border border-zinc-800/80 rounded-2xl shadow-2xl z-50 overflow-hidden animate-scale-in">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800/60">
+              <div className="flex items-center gap-2.5">
+                <Radio className="w-4 h-4 text-green-400" />
+                <h3 className="text-sm font-semibold text-white">Radio Mode</h3>
               </div>
-              <button
-                onClick={() => setShowRadioInfo(false)}
-                className="text-zinc-400 hover:text-white transition-colors"
-              >
-                <X className="w-5 h-5" />
+              <button onClick={() => setShowRadioInfo(false)} className="text-zinc-500 hover:text-white transition-colors">
+                <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="p-4 space-y-4">
-              <p className="text-zinc-300 text-sm leading-relaxed">
-                Radio mode automatically creates a playlist of similar songs based on the track you select.
+            <div className="p-5 space-y-4">
+              <p className="text-zinc-400 text-sm leading-relaxed">
+                Radio automatically queues similar tracks based on the song you pick — by artist, tempo, energy, and key.
               </p>
-              <div className="space-y-2">
-                <h4 className="text-white text-sm font-medium">How it works:</h4>
-                <ul className="text-zinc-400 text-sm space-y-1.5">
-                  <li className="flex items-start gap-2">
-                    <span className="text-green-400 mt-0.5">1.</span>
-                    <span>Search for a song you like</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-green-400 mt-0.5">2.</span>
-                    <span>Click the <Radio className="w-3 h-3 inline mx-1" /> icon next to the play button</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-green-400 mt-0.5">3.</span>
-                    <span>Similar tracks are queued based on artist, tempo, energy, and musical key</span>
-                  </li>
+              <div className="space-y-2.5">
+                <h4 className="text-white text-xs font-semibold uppercase tracking-wider">How it works</h4>
+                <ul className="text-zinc-500 text-sm space-y-1.5">
+                  {[
+                    'Search for a track you like',
+                    'Click the Radio icon next to the play button',
+                    'Similar tracks queue up automatically and keep refilling',
+                  ].map((step, i) => (
+                    <li key={i} className="flex items-start gap-2.5">
+                      <span className="text-green-500 text-xs mt-0.5 tabular-nums">{i + 1}.</span>
+                      <span>{step}</span>
+                    </li>
+                  ))}
                 </ul>
               </div>
-              <div className="pt-2 border-t border-zinc-800">
-                <p className="text-zinc-500 text-xs">
-                  Tip: Radio mode works best when your library has been analyzed. Admins can trigger analysis from the Admin panel.
-                </p>
+              <div className="pt-3 border-t border-zinc-800/50">
+                <p className="text-zinc-600 text-xs">Tip: Works best after running "Analyze All" in the Admin panel to populate BPM, key, and energy data.</p>
               </div>
             </div>
           </div>

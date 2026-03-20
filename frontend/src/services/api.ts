@@ -282,8 +282,19 @@ class ApiClient {
     return `${API_URL}/tracks/${id}/stream${tokenParam}`;
   }
 
-  async getSimilarTracks(id: string, limit = 20) {
-    return this.request<SimilarTracksResponse>(`/tracks/${id}/similar?limit=${limit}`);
+  async getSimilarTracks(id: string, options?: { limit?: number; excludeIds?: string; recentArtists?: string }) {
+    const params = new URLSearchParams();
+    params.set('limit', String(options?.limit ?? 30));
+    if (options?.excludeIds) params.set('excludeIds', options.excludeIds);
+    if (options?.recentArtists) params.set('recentArtists', options.recentArtists);
+    return this.request<SimilarTracksResponse>(`/tracks/${id}/similar?${params.toString()}`);
+  }
+
+  async logSkip(id: string, position: number) {
+    return this.request<{ ok: boolean }>(`/tracks/${id}/skip`, {
+      method: 'POST',
+      body: JSON.stringify({ position }),
+    });
   }
 
   async analyzeAllTracks() {

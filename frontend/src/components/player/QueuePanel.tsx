@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { X, ListMusic, Trash2, GripVertical } from 'lucide-react';
 import {
   DndContext,
@@ -17,7 +17,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { usePlayerStore } from '@/stores/playerStore';
-import { Track } from '@/services/api';
+import { Track, api } from '@/services/api';
 
 interface SortableQueueItemProps {
   track: Track;
@@ -82,13 +82,21 @@ const SortableQueueItem = ({
         className="flex-1 flex items-center gap-3 text-left min-w-0"
       >
         <div className="relative w-10 h-10 flex-shrink-0">
-          <img
-            src={`https://picsum.photos/seed/${track.id}/40/40`}
-            alt={track.title}
-            loading="lazy"
-            decoding="async"
-            className="w-full h-full rounded object-cover"
-          />
+          {track.coverArt ? (
+            <img
+              src={api.getTrackCoverUrl(track.coverArt)}
+              alt={track.title}
+              loading="lazy"
+              decoding="async"
+              className="w-full h-full rounded object-cover"
+            />
+          ) : (
+            <div className="w-full h-full rounded bg-zinc-800 flex items-center justify-center">
+              <svg className="w-4 h-4 text-zinc-600" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+              </svg>
+            </div>
+          )}
           {isCurrent && isPlaying && (
             <div className="absolute inset-0 bg-black/50 rounded flex items-center justify-center">
               <div className="flex items-center gap-0.5">
@@ -136,6 +144,7 @@ const QueuePanel = () => {
     clearQueue,
   } = usePlayerStore();
   const [isClosing, setIsClosing] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -167,7 +176,8 @@ const QueuePanel = () => {
 
   const handleClose = () => {
     setIsClosing(true);
-    setTimeout(() => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = setTimeout(() => {
       toggleQueue();
       setIsClosing(false);
     }, 300);
