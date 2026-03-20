@@ -9,8 +9,8 @@ import { parseFile } from 'music-metadata';
 import { z } from 'zod';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { db, tracks } from '../db/index.js';
-import { eq, ne, sql } from 'drizzle-orm';
+import { db, tracks, favorites, playHistory, trackSkips } from '../db/index.js';
+import { eq, ne, sql, and } from 'drizzle-orm';
 import { authMiddleware, adminMiddleware } from '../middleware/auth.js';
 
 const execFileAsync = promisify(execFile);
@@ -21,6 +21,11 @@ const checkDuplicatesSchema = z.object({
     title: z.string(),
     artist: z.string().nullable(),
   })),
+});
+
+// Schema for logging a track skip
+const skipTrackSchema = z.object({
+  position: z.number().int().min(0).max(100),
 });
 
 // Schema for updating track metadata
@@ -443,6 +448,7 @@ export async function trackRoutes(app: FastifyInstance) {
   // Stream track audio - ANY AUTHENTICATED USER
   app.get<{ Params: { id: string } }>('/:id/stream', {
     preHandler: authMiddleware,
+    config: { rateLimit: { max: 200, timeWindow: '1 minute' } },
   }, async (request, reply) => {
     const { id } = request.params;
 
@@ -520,11 +526,26 @@ export async function trackRoutes(app: FastifyInstance) {
   });
 
   // Get similar tracks for Radio mode - ANY AUTHENTICATED USER
-  app.get<{ Params: { id: string }; Querystring: { limit?: string } }>('/:id/similar', {
+  app.get<{
+    Params: { id: string };
+    Querystring: { limit?: string; excludeIds?: string; recentArtists?: string };
+  }>('/:id/similar', {
     preHandler: authMiddleware,
   }, async (request, reply) => {
     const { id } = request.params;
-    const limit = parseInt(request.query.limit || '20', 10);
+    const { userId } = request.user as { userId: string };
+    const limitRaw = parseInt(request.query.limit || '30', 10);
+    const limit = Math.min(limitRaw, 50); // cap at 50
+
+    // Comma-separated IDs to exclude (already in queue)
+    const excludeIds = request.query.excludeIds
+      ? request.query.excludeIds.split(',').filter(Boolean)
+      : [];
+
+    // Comma-separated artists played recently (apply penalty for repetition)
+    const recentArtists = request.query.recentArtists
+      ? request.query.recentArtists.split(',').filter(Boolean).map(a => a.toLowerCase())
+      : [];
 
     const sourceTrack = await db.query.tracks.findFirst({
       where: eq(tracks.id, id),
@@ -534,10 +555,42 @@ export async function trackRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Track not found' });
     }
 
-    // Get all tracks except the source (filter at database level for performance)
-    const otherTracks = await db.query.tracks.findMany({
+    // Get all tracks except the source
+    const allOtherTracks = await db.query.tracks.findMany({
       where: ne(tracks.id, id),
     });
+
+    // Apply excludeIds filter in-memory
+    const excludeSet = new Set(excludeIds);
+    const otherTracks = excludeSet.size > 0
+      ? allOtherTracks.filter(t => !excludeSet.has(t.id))
+      : allOtherTracks;
+
+    // Get user's favorited track IDs for boost scoring
+    const userFavorites = await db.query.favorites.findMany({
+      where: eq(favorites.userId, userId),
+      columns: { trackId: true },
+    });
+    const favoritedIds = new Set(userFavorites.map(f => f.trackId));
+
+    // Get user's recent play history IDs (last 200) for boost scoring
+    const userHistory = await db.query.playHistory.findMany({
+      where: eq(playHistory.userId, userId),
+      columns: { trackId: true },
+      orderBy: (playHistory, { desc }) => [desc(playHistory.playedAt)],
+      limit: 200,
+    });
+    const historiedIds = new Set(userHistory.map(h => h.trackId));
+
+    // Get early-skip counts per track (skipped at <30% three or more times = penalty)
+    const skipCounts = await db.select({
+      trackId: trackSkips.trackId,
+      count: sql<number>`count(*)`,
+    })
+      .from(trackSkips)
+      .where(and(eq(trackSkips.userId, userId), sql`${trackSkips.skipPosition} < 30`))
+      .groupBy(trackSkips.trackId);
+    const earlySkipMap = new Map(skipCounts.map(s => [s.trackId, Number(s.count)]));
 
     // Calculate similarity score for each track
     const scoredTracks = otherTracks.map(track => {
@@ -562,7 +615,6 @@ export async function trackRoutes(app: FastifyInstance) {
       // Similar BPM = medium score (20 points)
       if (areBpmsSimilar(sourceTrack.bpm, track.bpm)) {
         score += 20;
-        // Bonus for very close BPM
         if (sourceTrack.bpm && track.bpm && Math.abs(sourceTrack.bpm - track.bpm) <= 5) {
           score += 10;
         }
@@ -571,7 +623,6 @@ export async function trackRoutes(app: FastifyInstance) {
       // Compatible key = medium score (15 points)
       if (areKeysCompatible(sourceTrack.key, track.key)) {
         score += 15;
-        // Bonus for same key
         if (sourceTrack.key && track.key && sourceTrack.key === track.key) {
           score += 10;
         }
@@ -580,29 +631,59 @@ export async function trackRoutes(app: FastifyInstance) {
       // Similar energy = medium score (20 points)
       if (areEnergiesSimilar(sourceTrack.energy, track.energy)) {
         score += 20;
-        // Bonus for very close energy
         if (sourceTrack.energy && track.energy && Math.abs(sourceTrack.energy - track.energy) <= 10) {
           score += 10;
         }
       }
 
+      // Favorites boost (+15) — user has liked this track
+      if (favoritedIds.has(track.id)) {
+        score += 15;
+      }
+
+      // History boost (+10) — user has played this before (they like it)
+      if (historiedIds.has(track.id)) {
+        score += 10;
+      }
+
+      // Recent artist penalty (-20) — avoid repeating the same artist back-to-back
+      if (track.artist && recentArtists.includes(track.artist.toLowerCase())) {
+        score -= 20;
+      }
+
+      // Early skip penalty (-25) — user consistently skips this track early
+      const skipCount = earlySkipMap.get(track.id) ?? 0;
+      if (skipCount >= 3) {
+        score -= 25;
+      }
+
       return { track, score };
     });
 
-    // Sort by score descending, then add some randomness for variety
+    // Sort by score descending, randomize within tiers for variety
     scoredTracks.sort((a, b) => {
-      // Group into tiers and randomize within tiers
       const tierA = Math.floor(a.score / 20);
       const tierB = Math.floor(b.score / 20);
       if (tierA !== tierB) {
         return tierB - tierA;
       }
-      // Randomize within the same tier
       return Math.random() - 0.5;
     });
 
-    // Return top N similar tracks
-    const similarTracks = scoredTracks.slice(0, limit).map(st => ({
+    // Apply artist variety: max 2 tracks per artist in the result
+    const artistCount = new Map<string, number>();
+    const varietyFiltered: typeof scoredTracks = [];
+    for (const st of scoredTracks) {
+      const artistKey = st.track.artist?.toLowerCase() ?? '__unknown__';
+      const count = artistCount.get(artistKey) ?? 0;
+      if (count < 2) {
+        varietyFiltered.push(st);
+        artistCount.set(artistKey, count + 1);
+      }
+      if (varietyFiltered.length >= limit) break;
+    }
+
+    const similarTracks = varietyFiltered.map(st => ({
       ...st.track,
       similarityScore: st.score,
     }));
@@ -611,6 +692,41 @@ export async function trackRoutes(app: FastifyInstance) {
       sourceTrack,
       similarTracks,
     });
+  });
+
+  // Log a track skip (for smart recommendation penalty) - ANY AUTHENTICATED USER
+  app.post<{ Params: { id: string } }>('/:id/skip', {
+    preHandler: authMiddleware,
+  }, async (request, reply) => {
+    const { id } = request.params;
+    const { userId } = request.user as { userId: string };
+
+    let body: { position: number };
+    try {
+      body = skipTrackSchema.parse(request.body);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({ error: 'Invalid input', details: error.errors });
+      }
+      throw error;
+    }
+
+    const track = await db.query.tracks.findFirst({
+      where: eq(tracks.id, id),
+    });
+
+    if (!track) {
+      return reply.status(404).send({ error: 'Track not found' });
+    }
+
+    await db.insert(trackSkips).values({
+      id: uuidv4(),
+      userId,
+      trackId: id,
+      skipPosition: body.position,
+    });
+
+    return reply.status(201).send({ ok: true });
   });
 
   // Analyze existing tracks - ADMIN ONLY (for migrating existing library)

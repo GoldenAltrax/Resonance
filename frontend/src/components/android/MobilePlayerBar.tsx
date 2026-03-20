@@ -26,22 +26,22 @@ export default function MobilePlayerBar({ onOpenNowPlaying }: Props) {
 
   return (
     <div
-      className="fixed left-0 right-0 bg-[#0d0d0d] border-t border-zinc-800/50 z-40"
+      className="fixed left-0 right-0 bg-[#0c0c0c]/95 backdrop-blur-md border-t border-zinc-800/40 z-40"
       style={{ bottom: 'calc(56px + env(safe-area-inset-bottom))' }}
     >
-      {/* Progress bar */}
-      <div className="h-0.5 bg-zinc-800">
+      {/* Progress bar — slightly thicker, gradient fill */}
+      <div className="h-[3px] bg-zinc-800/80">
         <div
-          className="h-full bg-white transition-none"
+          className="h-full bg-gradient-to-r from-zinc-300 to-white transition-none"
           style={{ width: `${progressPct}%` }}
         />
       </div>
 
-      <div className="flex items-center gap-3 px-4 h-[72px]">
-        {/* Album art — taps open NowPlayingScreen */}
+      <div className="flex items-center gap-3 px-4 h-[68px]">
+        {/* Album art */}
         <button
           onClick={onOpenNowPlaying}
-          className="w-11 h-11 bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0 active:scale-95 transition-transform"
+          className="w-10 h-10 bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0 active:scale-95 transition-transform ring-1 ring-white/5 shadow-md"
           aria-label="Open now playing"
         >
           {coverUrl ? (
@@ -52,12 +52,12 @@ export default function MobilePlayerBar({ onOpenNowPlaying }: Props) {
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center">
-              <Music className="w-5 h-5 text-zinc-600" />
+              <Music className="w-4 h-4 text-zinc-600" />
             </div>
           )}
         </button>
 
-        {/* Title + artist — taps open NowPlayingScreen */}
+        {/* Title + artist */}
         <button
           onClick={onOpenNowPlaying}
           className="flex-1 min-w-0 text-left active:opacity-70 transition-opacity"
@@ -72,11 +72,11 @@ export default function MobilePlayerBar({ onOpenNowPlaying }: Props) {
         </button>
 
         {/* Controls */}
-        <div className="flex items-center gap-1 flex-shrink-0">
+        <div className="flex items-center gap-0.5 flex-shrink-0">
           <button
             onClick={previous}
             aria-label="Previous track"
-            className="w-11 h-11 flex items-center justify-center text-zinc-400 active:text-white transition-colors"
+            className="w-10 h-10 flex items-center justify-center text-zinc-400 active:text-white active:scale-95 transition-all"
           >
             <SkipBack className="w-5 h-5" />
           </button>
@@ -84,21 +84,21 @@ export default function MobilePlayerBar({ onOpenNowPlaying }: Props) {
           <button
             onClick={() => !isLoadingAudio && (isPlaying ? pause() : play())}
             aria-label={isLoadingAudio ? 'Loading' : isPlaying ? 'Pause' : 'Play'}
-            className="w-12 h-12 bg-white rounded-full flex items-center justify-center active:scale-95 transition-transform"
+            className="w-11 h-11 bg-white rounded-full flex items-center justify-center active:scale-90 transition-transform shadow-glow-sm"
           >
             {isLoadingAudio ? (
-              <Loader2 className="w-5 h-5 text-black animate-spin" />
+              <Loader2 className="w-4 h-4 text-black animate-spin" />
             ) : isPlaying ? (
-              <Pause className="w-5 h-5 text-black" />
+              <Pause className="w-4 h-4 text-black" />
             ) : (
-              <Play className="w-5 h-5 text-black ml-0.5" />
+              <Play className="w-4 h-4 text-black ml-0.5" />
             )}
           </button>
 
           <button
             onClick={next}
             aria-label="Next track"
-            className="w-11 h-11 flex items-center justify-center text-zinc-400 active:text-white transition-colors"
+            className="w-10 h-10 flex items-center justify-center text-zinc-400 active:text-white active:scale-95 transition-all"
           >
             <SkipForward className="w-5 h-5" />
           </button>

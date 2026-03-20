@@ -65,37 +65,40 @@ export default function NowPlayingScreen({ onClose }: Props) {
 
   const progressPct = duration > 0 ? (progress / duration) * 100 : 0;
   const isFavorited = favoriteIds.has(currentTrack.id);
-
-  const coverUrl = currentTrack.coverArt
-    ? api.getTrackCoverUrl(currentTrack.coverArt)
-    : null;
+  const coverUrl = currentTrack.coverArt ? api.getTrackCoverUrl(currentTrack.coverArt) : null;
 
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 z-50 flex flex-col bg-[#0a0a0a]"
+      className="fixed inset-0 z-50 flex flex-col bg-[#0a0a0a] animate-fade-in"
       style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
+      {/* Subtle top gradient for depth */}
+      <div className="absolute inset-x-0 top-0 h-48 bg-gradient-to-b from-zinc-800/20 to-transparent pointer-events-none" />
+
       {/* Header */}
-      <div className="flex items-center justify-between px-4 pt-2 pb-4">
+      <div className="relative flex items-center justify-between px-4 pt-3 pb-2">
+        {/* Swipe handle */}
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 w-10 h-1 bg-zinc-700 rounded-full" />
+
         <button
           onClick={onClose}
-          className="w-10 h-10 flex items-center justify-center text-zinc-400 active:text-white"
+          className="w-10 h-10 flex items-center justify-center text-zinc-500 active:text-white transition-colors"
           aria-label="Close"
         >
           <ChevronDown className="w-6 h-6" />
         </button>
         <div className="text-center">
-          <p className="text-xs text-zinc-500 uppercase tracking-widest font-medium">Now Playing</p>
+          <p className="text-[11px] text-zinc-500 uppercase tracking-widest font-medium">Now Playing</p>
         </div>
         <div className="w-10" />
       </div>
 
       {/* Album art */}
-      <div className="flex-1 flex items-center justify-center px-8 pb-4">
-        <div className="w-full aspect-square max-w-sm bg-zinc-900 rounded-2xl overflow-hidden shadow-2xl">
+      <div className="flex-1 flex items-center justify-center px-8 pb-2">
+        <div className="w-full aspect-square max-w-sm bg-zinc-900 rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/5">
           {coverUrl ? (
             <img
               src={coverUrl}
@@ -104,7 +107,7 @@ export default function NowPlayingScreen({ onClose }: Props) {
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center">
-              <Music className="w-24 h-24 text-zinc-700" />
+              <Music className="w-20 h-20 text-zinc-800" />
             </div>
           )}
         </div>
@@ -116,69 +119,66 @@ export default function NowPlayingScreen({ onClose }: Props) {
           <p className="text-xl font-semibold text-white truncate leading-tight">
             {currentTrack.title}
           </p>
-          <p className="text-base text-zinc-400 truncate mt-1">
+          <p className="text-sm text-zinc-400 truncate mt-1">
             {currentTrack.artist || 'Unknown Artist'}
           </p>
         </div>
         <button
           onClick={() => toggleFavorite(currentTrack)}
           aria-label={isFavorited ? 'Unlike' : 'Like'}
-          className="w-10 h-10 flex items-center justify-center text-zinc-400 active:scale-95 transition-transform flex-shrink-0 mt-1"
+          className={`w-10 h-10 flex items-center justify-center active:scale-90 transition-all flex-shrink-0 mt-1 ${
+            isFavorited ? 'text-pink-500' : 'text-zinc-600'
+          }`}
         >
-          <Heart
-            className={`w-6 h-6 transition-colors ${isFavorited ? 'fill-white text-white' : ''}`}
-          />
+          <Heart className={`w-6 h-6 transition-colors ${isFavorited ? 'fill-current' : ''}`} />
         </button>
       </div>
 
       {/* Seek bar */}
-      <div className="px-6 pb-4">
+      <div className="px-6 pb-5">
         <input
           type="range"
           min={0}
           max={duration || 1}
           value={progress}
           onChange={handleSeek}
-          className="w-full h-1 appearance-none bg-zinc-700 rounded-full cursor-pointer"
+          className="range-slider w-full"
           style={{
-            background: `linear-gradient(to right, #ffffff ${progressPct}%, #3f3f46 ${progressPct}%)`,
+            background: `linear-gradient(to right, #ffffff ${progressPct}%, #27272a ${progressPct}%)`,
           }}
           aria-label="Seek"
         />
-        <div className="flex justify-between mt-1">
-          <span className="text-xs text-zinc-500">{formatTime(progress)}</span>
-          <span className="text-xs text-zinc-500">{formatTime(duration)}</span>
+        <div className="flex justify-between mt-2">
+          <span className="text-[11px] text-zinc-600 tabular-nums">{formatTime(progress)}</span>
+          <span className="text-[11px] text-zinc-600 tabular-nums">{formatTime(duration)}</span>
         </div>
       </div>
 
       {/* Playback controls */}
-      <div className="px-4 pb-6">
+      <div className="px-6 pb-8">
         <div className="flex items-center justify-between">
-          {/* Shuffle */}
           <button
             onClick={toggleShuffle}
             aria-label="Shuffle"
-            className={`w-11 h-11 flex items-center justify-center transition-colors active:scale-95 ${
+            className={`w-11 h-11 flex items-center justify-center transition-all active:scale-90 ${
               shuffle ? 'text-white' : 'text-zinc-600'
             }`}
           >
             <Shuffle className="w-5 h-5" />
           </button>
 
-          {/* Previous */}
           <button
             onClick={previous}
             aria-label="Previous"
-            className="w-14 h-14 flex items-center justify-center text-white active:scale-95 transition-transform"
+            className="w-14 h-14 flex items-center justify-center text-white active:scale-90 transition-transform"
           >
             <SkipBack className="w-7 h-7" />
           </button>
 
-          {/* Play / Pause */}
           <button
             onClick={() => !isLoadingAudio && (isPlaying ? pause() : play())}
             aria-label={isLoadingAudio ? 'Loading' : isPlaying ? 'Pause' : 'Play'}
-            className="w-18 h-18 bg-white rounded-full flex items-center justify-center active:scale-95 transition-transform shadow-lg"
+            className="flex items-center justify-center bg-white rounded-full active:scale-90 transition-transform shadow-glow-white"
             style={{ width: 72, height: 72 }}
           >
             {isLoadingAudio ? (
@@ -190,28 +190,22 @@ export default function NowPlayingScreen({ onClose }: Props) {
             )}
           </button>
 
-          {/* Next */}
           <button
             onClick={next}
             aria-label="Next"
-            className="w-14 h-14 flex items-center justify-center text-white active:scale-95 transition-transform"
+            className="w-14 h-14 flex items-center justify-center text-white active:scale-90 transition-transform"
           >
             <SkipForward className="w-7 h-7" />
           </button>
 
-          {/* Repeat */}
           <button
             onClick={toggleRepeat}
             aria-label="Repeat"
-            className={`w-11 h-11 flex items-center justify-center transition-colors active:scale-95 ${
+            className={`w-11 h-11 flex items-center justify-center transition-all active:scale-90 ${
               repeat !== 'none' ? 'text-white' : 'text-zinc-600'
             }`}
           >
-            {repeat === 'one' ? (
-              <Repeat1 className="w-5 h-5" />
-            ) : (
-              <Repeat className="w-5 h-5" />
-            )}
+            {repeat === 'one' ? <Repeat1 className="w-5 h-5" /> : <Repeat className="w-5 h-5" />}
           </button>
         </div>
       </div>

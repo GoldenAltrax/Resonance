@@ -25,11 +25,14 @@ const SettingsView = () => {
     setShowLogoutConfirm(true);
   };
 
+  const logoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const handleLogoutConfirm = () => {
     setShowLogoutConfirm(false);
     setIsLoggingOut(true);
     const { logout } = useAuthStore.getState();
-    setTimeout(() => logout(), 2000);
+    if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
+    logoutTimerRef.current = setTimeout(() => logout(), 2000);
   };
 
   const handleAvatarClick = () => {

@@ -4,6 +4,7 @@ import { Track, UserPreferences, api } from '@/services/api';
 
 // Debounce for server preferences sync
 let _syncPrefTimeout: ReturnType<typeof setTimeout> | null = null;
+let _radioAutoStartedTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const _syncPrefsToServer = (prefs: UserPreferences) => {
   if (_syncPrefTimeout) clearTimeout(_syncPrefTimeout);
@@ -16,6 +17,18 @@ const _syncPrefsToServer = (prefs: UserPreferences) => {
     });
   }, 1500);
 };
+
+const _extractPrefs = (s: PlayerState): UserPreferences => ({
+  volume: s.volume,
+  isMuted: s.isMuted,
+  shuffle: s.shuffle,
+  repeat: s.repeat,
+  crossfadeEnabled: s.crossfadeEnabled,
+  crossfadeDuration: s.crossfadeDuration,
+  eqEnabled: s.eqEnabled,
+  eqGains: s.eqGains,
+  eqPreset: s.eqPreset,
+});
 
 // Debounce tracking for logPlay API calls
 let lastLoggedTrackId: string | null = null;
@@ -107,6 +120,8 @@ interface PlayerState {
   // Radio mode
   startRadio: (track: Track, similarTracks: Track[]) => void;
   stopRadio: () => void;
+  // Smart auto-play notification (set briefly when radio auto-starts at queue end)
+  radioAutoStarted: boolean;
   // Cross-device sync
   loadPreferences: (prefs: UserPreferences) => void;
 }
@@ -136,6 +151,7 @@ export const usePlayerStore = create<PlayerState>()(
       showEqualizer: false,
       radioMode: false,
       radioSourceTrackId: null,
+      radioAutoStarted: false,
       sleepTimerEnd: null,
       sleepTimerMinutes: null,
       audioElement: null,
@@ -190,8 +206,14 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   next: () => {
-    const { queue, queueIndex, shuffle, repeat } = get();
+    const { queue, queueIndex, shuffle, repeat, currentTrack, progress, duration, radioMode } = get();
     if (queue.length === 0) return;
+
+    // C5: Skip logging — if <30% through the track, record the skip
+    if (currentTrack && duration > 0 && progress / duration < 0.30) {
+      const skipPosition = Math.round((progress / duration) * 100);
+      api.logSkip(currentTrack.id, skipPosition).catch(() => {});
+    }
 
     let nextIndex: number;
 
@@ -213,8 +235,23 @@ export const usePlayerStore = create<PlayerState>()(
         if (repeat === 'all') {
           nextIndex = 0;
         } else {
-          // End of queue
-          set({ isPlaying: false });
+          // C4: Smart auto-play — start radio from current track instead of stopping
+          if (currentTrack && !radioMode) {
+            api.getSimilarTracks(currentTrack.id, { limit: 30 }).then(({ similarTracks }) => {
+              if (similarTracks.length > 0) {
+                get().startRadio(currentTrack, similarTracks);
+                if (_radioAutoStartedTimeout) clearTimeout(_radioAutoStartedTimeout);
+                set({ radioAutoStarted: true });
+                _radioAutoStartedTimeout = setTimeout(() => set({ radioAutoStarted: false }), 4000);
+              } else {
+                set({ isPlaying: false });
+              }
+            }).catch(() => {
+              set({ isPlaying: false });
+            });
+          } else {
+            set({ isPlaying: false });
+          }
           return;
         }
       }
@@ -274,8 +311,7 @@ export const usePlayerStore = create<PlayerState>()(
         if (audioElement) {
           audioElement.volume = volume;
         }
-        const s = get();
-        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
+        _syncPrefsToServer(_extractPrefs(get()));
       },
 
       toggleMute: () => {
@@ -285,8 +321,7 @@ export const usePlayerStore = create<PlayerState>()(
         if (audioElement) {
           audioElement.volume = newMuted ? 0 : volume;
         }
-        const s = get();
-        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
+        _syncPrefsToServer(_extractPrefs(get()));
       },
 
       setProgress: (progress) => set({ progress }),
@@ -295,8 +330,7 @@ export const usePlayerStore = create<PlayerState>()(
 
   toggleShuffle: () => {
         set((state) => ({ shuffle: !state.shuffle }));
-        const s = get();
-        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
+        _syncPrefsToServer(_extractPrefs(get()));
       },
 
   toggleLyrics: () => set((state) => ({ showLyrics: !state.showLyrics, showQueue: false })),
@@ -310,8 +344,7 @@ export const usePlayerStore = create<PlayerState>()(
           crossfadeEnabled: enabled,
           crossfadeDuration: duration ?? state.crossfadeDuration,
         }));
-        const s = get();
-        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
+        _syncPrefsToServer(_extractPrefs(get()));
       },
 
       setEqGain: (bandIndex, gain) => {
@@ -320,20 +353,17 @@ export const usePlayerStore = create<PlayerState>()(
           eqGains[bandIndex] = gain;
           return { eqGains };
         });
-        const s = get();
-        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
+        _syncPrefsToServer(_extractPrefs(get()));
       },
 
       setEqPreset: (preset, gains) => {
         set({ eqPreset: preset, eqGains: gains });
-        const s = get();
-        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
+        _syncPrefsToServer(_extractPrefs(get()));
       },
 
       toggleEq: () => {
         set((state) => ({ eqEnabled: !state.eqEnabled }));
-        const s = get();
-        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
+        _syncPrefsToServer(_extractPrefs(get()));
       },
 
       toggleEqualizer: () => set((state) => ({ showEqualizer: !state.showEqualizer })),
@@ -347,8 +377,7 @@ export const usePlayerStore = create<PlayerState>()(
               ? 'one'
               : 'none',
         }));
-        const s = get();
-        _syncPrefsToServer({ volume: s.volume, isMuted: s.isMuted, shuffle: s.shuffle, repeat: s.repeat, crossfadeEnabled: s.crossfadeEnabled, crossfadeDuration: s.crossfadeDuration, eqEnabled: s.eqEnabled, eqGains: s.eqGains, eqPreset: s.eqPreset });
+        _syncPrefsToServer(_extractPrefs(get()));
       },
 
       addToQueue: (tracks) =>

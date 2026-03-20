@@ -66,6 +66,18 @@ export const playHistory = sqliteTable('play_history', {
   playedAt: integer('played_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
 });
 
+// Track skips table (used for smart recommendation penalty)
+// Application-level data isolation note: SQLite has no native Row-Level Security (RLS).
+// Enforcement is done at the application layer — every query that reads or mutates user
+// data is filtered by userId (ownership check). This is the SQLite equivalent of RLS.
+export const trackSkips = sqliteTable('track_skips', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  trackId: text('track_id').notNull().references(() => tracks.id, { onDelete: 'cascade' }),
+  skipPosition: integer('skip_position').notNull(), // 0-100 % through track when skipped
+  skippedAt: integer('skipped_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
+});
+
 // Invite codes table for admin-managed registration
 export const inviteCodes = sqliteTable('invite_codes', {
   id: text('id').primaryKey(),
@@ -93,3 +105,5 @@ export type Favorite = typeof favorites.$inferSelect;
 export type NewFavorite = typeof favorites.$inferInsert;
 export type PlayHistory = typeof playHistory.$inferSelect;
 export type NewPlayHistory = typeof playHistory.$inferInsert;
+export type TrackSkip = typeof trackSkips.$inferSelect;
+export type NewTrackSkip = typeof trackSkips.$inferInsert;

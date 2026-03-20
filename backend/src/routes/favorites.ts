@@ -21,10 +21,11 @@ export async function favoriteRoutes(app: FastifyInstance) {
 
     // Get track IDs from favorites
     const trackIds = userFavorites.map(f => f.trackId);
+    if (trackIds.length === 0) return reply.send([]);
 
     // Get tracks data
     const favoriteTracks = await db.query.tracks.findMany({
-      where: (tracks, { inArray }) => inArray(tracks.id, trackIds.length > 0 ? trackIds : ['']),
+      where: (tracks, { inArray }) => inArray(tracks.id, trackIds),
     });
 
     // Combine favorites with track data

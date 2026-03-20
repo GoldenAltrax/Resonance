@@ -47,7 +47,7 @@ const SearchView = () => {
     e.stopPropagation();
     setLoadingRadio(track.id);
     try {
-      const response = await api.getSimilarTracks(track.id, 30);
+      const response = await api.getSimilarTracks(track.id, { limit: 30 });
       startRadio(track, response.similarTracks);
       toast.success(`Radio started based on "${track.title}"`);
     } catch (err) {

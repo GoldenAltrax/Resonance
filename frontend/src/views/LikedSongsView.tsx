@@ -3,7 +3,7 @@ import { Play, Pause, Heart, ListPlus, Plus, Loader2 } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useFavoritesStore } from '@/stores/favoritesStore';
 import { usePlaylistStore } from '@/stores/playlistStore';
-import { Track } from '@/services/api';
+import { Track, api } from '@/services/api';
 import { toast } from '@/stores/toastStore';
 
 const LikedSongsView = () => {
@@ -206,14 +206,20 @@ const LikedSongsView = () => {
 
                   {/* Title */}
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 bg-zinc-800 rounded overflow-hidden flex-shrink-0">
-                      <img
-                        src={`https://picsum.photos/seed/${track.id}/40/40`}
-                        alt={track.title}
-                        loading="lazy"
-                        decoding="async"
-                        className="w-full h-full object-cover"
-                      />
+                    <div className="w-10 h-10 bg-zinc-800 rounded overflow-hidden flex-shrink-0 flex items-center justify-center">
+                      {track.coverArt ? (
+                        <img
+                          src={api.getTrackCoverUrl(track.coverArt)}
+                          alt={track.title}
+                          loading="lazy"
+                          decoding="async"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <svg className="w-4 h-4 text-zinc-600" viewBox="0 0 24 24" fill="currentColor">
+                          <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+                        </svg>
+                      )}
                     </div>
                     <span className={`truncate ${isTrackPlaying(track) ? 'text-pink-500 font-medium' : 'text-zinc-300'}`}>
                       {track.title}

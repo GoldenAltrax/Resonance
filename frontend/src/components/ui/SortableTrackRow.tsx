@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Play, MoreHorizontal, GripVertical, Heart, Trash2, ListPlus, ListEnd, ListStart, Check } from 'lucide-react';
-import { Track, Playlist } from '@/services/api';
+import { Track, Playlist, api } from '@/services/api';
 import { useFavoritesStore } from '@/stores/favoritesStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { toast } from '@/stores/toastStore';
@@ -169,13 +169,19 @@ const SortableTrackRow = ({
       {/* Title and Artist */}
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 bg-zinc-800 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
-          <img
-            src={`https://picsum.photos/seed/${track.id}/40/40`}
-            alt={track.title}
-            loading="lazy"
-            decoding="async"
-            className="w-full h-full object-cover"
-          />
+          {track.coverArt ? (
+            <img
+              src={api.getTrackCoverUrl(track.coverArt)}
+              alt={track.title}
+              loading="lazy"
+              decoding="async"
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <svg className="w-4 h-4 text-zinc-600" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+            </svg>
+          )}
         </div>
         <div>
           <p className={`text-sm font-medium line-clamp-1 ${isCurrentTrack ? 'text-white' : 'text-white'}`}>
