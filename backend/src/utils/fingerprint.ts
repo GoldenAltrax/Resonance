@@ -45,6 +45,11 @@ export interface ExistingTrackMeta {
 
 // ─── generateFingerprint ────────────────────────────────────────────────────
 
+/**
+ * Generates a Chromaprint acoustic fingerprint using fpcalc.
+ * Returns null if fpcalc is not installed or the file cannot be analysed.
+ * Requires: apt install libchromaprint-tools
+ */
 export async function generateFingerprint(filePath: string): Promise<FingerprintResult | null> {
   try {
     const { stdout } = await execFileAsync('fpcalc', ['-json', '-length', '120', filePath], {
@@ -60,6 +65,11 @@ export async function generateFingerprint(filePath: string): Promise<Fingerprint
 
 // ─── lookupAcoustID ─────────────────────────────────────────────────────────
 
+/**
+ * Submits a fingerprint to AcoustID and returns the top-confidence
+ * MusicBrainz Recording ID. Returns null on network error or no match.
+ * Requires ACOUSTID_API_KEY env var (free at acoustid.org).
+ */
 export async function lookupAcoustID(
   fingerprint: string,
   duration: number
