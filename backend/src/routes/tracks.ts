@@ -864,6 +864,51 @@ export async function trackRoutes(app: FastifyInstance) {
     });
   });
 
+  // Fingerprint existing tracks that haven't been fingerprinted yet — ADMIN ONLY
+  app.post('/fingerprint-all', {
+    preHandler: adminMiddleware,
+  }, async (_request: FastifyRequest, reply: FastifyReply) => {
+    const allTracks = await db.query.tracks.findMany();
+    const toFingerprint = allTracks.filter(t => !t.acoustidFingerprint);
+
+    if (toFingerprint.length === 0) {
+      return reply.send({ message: 'All tracks already fingerprinted', processed: 0, total: allTracks.length });
+    }
+
+    let processed = 0;
+    let failed = 0;
+
+    for (const track of toFingerprint) {
+      const filePath = resolveStoredFilePath(track.filePath);
+      if (!filePath) { failed++; continue; }
+
+      try {
+        const fp = await generateFingerprint(filePath);
+        if (!fp) { failed++; continue; }
+
+        // Rate-limit AcoustID to 1 req/sec
+        await new Promise(r => setTimeout(r, 1000));
+        const acoustidResult = await lookupAcoustID(fp.fingerprint, fp.duration);
+
+        await db.update(tracks)
+          .set({
+            acoustidFingerprint: fp.fingerprint,
+            acoustidId: acoustidResult?.acoustidId ?? null,
+            musicbrainzRecordingId: acoustidResult?.musicbrainzRecordingId ?? null,
+          })
+          .where(eq(tracks.id, track.id));
+
+        processed++;
+        console.log(`Fingerprinted track ${track.id}: mbid=${acoustidResult?.musicbrainzRecordingId ?? 'none'}`);
+      } catch (err) {
+        failed++;
+        console.error(`Failed to fingerprint track ${track.id}:`, err);
+      }
+    }
+
+    return reply.send({ message: 'Fingerprinting complete', processed, failed, total: allTracks.length });
+  });
+
   // Update track metadata - ADMIN ONLY
   app.patch<{ Params: { id: string } }>('/:id', {
     preHandler: adminMiddleware,
