@@ -1,3 +1,5 @@
+import { DuplicateError, AcousticDuplicate } from '@/types/index';
+
 // Use environment variable for API URL, fallback to relative path for dev proxy
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -178,14 +180,46 @@ class ApiClient {
     return this.request<Track>('/tracks/' + id);
   }
 
-  async uploadTrack(file: File) {
+  async uploadTrack(file: File): Promise<Track> {
     const formData = new FormData();
     formData.append('file', file);
 
-    return this.request<Track>('/tracks', {
+    const headers: Record<string, string> = {};
+    if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
+
+    const response = await fetch(`${API_URL}/tracks`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (response.status === 409) {
+      const data = await response.json() as { duplicate: AcousticDuplicate };
+      throw new DuplicateError(data.duplicate);
+    }
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'An error occurred' })) as { error: string };
+      throw new Error(error.error || 'Upload failed');
+    }
+
+    return response.json() as Promise<Track>;
+  }
+
+  async uploadTrackForce(file: File): Promise<Track> {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request<Track>('/tracks?force=true', {
       method: 'POST',
       body: formData,
     });
+  }
+
+  async fingerprintAll() {
+    return this.request<{ message: string; processed: number; failed: number; total: number }>(
+      '/tracks/fingerprint-all',
+      { method: 'POST' }
+    );
   }
 
   async deleteTrack(id: string) {
