@@ -37,6 +37,10 @@ export const tracks = sqliteTable('tracks', {
   bpm: integer('bpm'), // Beats per minute (tempo)
   key: text('key'), // Musical key (e.g., "C", "Am", "F#m")
   energy: integer('energy'), // Energy level 0-100 (loudness/intensity)
+  // Acoustic fingerprinting fields (added v4.4.0)
+  acoustidFingerprint: text('acoustid_fingerprint'), // Chromaprint compressed fingerprint string
+  acoustidId: text('acoustid_id'), // AcoustID result ID
+  musicbrainzRecordingId: text('musicbrainz_recording_id'), // Top-confidence MusicBrainz Recording ID
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   createdAt: integer('created_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
 });
