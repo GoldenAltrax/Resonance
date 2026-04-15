@@ -168,7 +168,7 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
     try {
       const track = await api.uploadTrackForce(file);
       await addTrackToPlaylist(playlistId, track.id);
-      fetchPlaylist(playlistId);
+      await fetchPlaylist(playlistId);
       toast.success(`Uploaded "${file.name.replace(/\.[^/.]+$/, '')}"`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Upload failed');
