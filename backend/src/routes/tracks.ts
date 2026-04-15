@@ -383,41 +383,43 @@ export async function trackRoutes(app: FastifyInstance) {
         };
 
         // Score against all existing tracks
-        const candidates = await db.query.tracks.findMany();
+        const candidates = await db.select({
+          id: tracks.id,
+          title: tracks.title,
+          artist: tracks.artist,
+          duration: tracks.duration,
+          originalFilename: tracks.originalFilename,
+          musicbrainzRecordingId: tracks.musicbrainzRecordingId,
+        }).from(tracks);
         let bestScore = 0;
         let bestMatch: typeof candidates[number] | null = null;
+        let bestResult: ReturnType<typeof calculateDuplicateScore> | null = null;
 
         for (const candidate of candidates) {
-          const { score } = calculateDuplicateScore(incomingMeta, {
+          const result = calculateDuplicateScore(incomingMeta, {
             title: candidate.title,
             artist: candidate.artist,
             duration: candidate.duration,
             originalFilename: candidate.originalFilename,
             musicbrainzRecordingId: candidate.musicbrainzRecordingId,
           });
-          if (score > bestScore) {
-            bestScore = score;
+          if (result.score > bestScore) {
+            bestScore = result.score;
             bestMatch = candidate;
+            bestResult = result;
           }
         }
 
-        if (bestScore >= 60 && bestMatch) {
+        if (bestScore >= 60 && bestMatch && bestResult) {
           // Clean up temp + final files before returning 409
-          try { await unlink(tempFilePath); } catch { /* ignore */ }
+          // Note: tempFilePath may already be gone if renamed (low-bitrate MP3 path)
+          try { await unlink(tempFilePath); } catch { /* already moved or never created */ }
           try { await unlink(finalFilePath); } catch { /* ignore */ }
-
-          const { breakdown } = calculateDuplicateScore(incomingMeta, {
-            title: bestMatch.title,
-            artist: bestMatch.artist,
-            duration: bestMatch.duration,
-            originalFilename: bestMatch.originalFilename,
-            musicbrainzRecordingId: bestMatch.musicbrainzRecordingId,
-          });
 
           return reply.status(409).send({
             duplicate: {
               score: bestScore,
-              breakdown,
+              breakdown: bestResult.breakdown,
               existingTrack: bestMatch,
             },
           });
