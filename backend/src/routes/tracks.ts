@@ -12,6 +12,7 @@ import { promisify } from 'util';
 import { db, tracks, favorites, playHistory, trackSkips } from '../db/index.js';
 import { eq, ne, sql, and } from 'drizzle-orm';
 import { authMiddleware, adminMiddleware } from '../middleware/auth.js';
+import { generateFingerprint, lookupAcoustID, calculateDuplicateScore } from '../utils/fingerprint.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -347,6 +348,82 @@ export async function trackRoutes(app: FastifyInstance) {
       const finalStats = await stat(finalFilePath);
       console.log(`Track ${trackId} compressed: ${(finalStats.size / 1024 / 1024).toFixed(2)}MB`);
 
+      // Check ?force=true — skip duplicate detection if admin confirmed override
+      const forceUpload = (request.query as Record<string, string>)?.force === 'true';
+
+      // Fingerprint data to carry through to DB insert
+      let fpFingerprint: string | null = null;
+      let fpAcoustidId: string | null = null;
+      let fpMusicbrainzId: string | null = null;
+
+      if (!forceUpload) {
+        // Generate acoustic fingerprint
+        const fp = await generateFingerprint(finalFilePath);
+        if (fp) {
+          fpFingerprint = fp.fingerprint;
+        }
+
+        // Look up AcoustID / MusicBrainz (non-blocking, silent fail)
+        let acoustidResult = null;
+        if (fp) {
+          acoustidResult = await lookupAcoustID(fp.fingerprint, fp.duration);
+          if (acoustidResult) {
+            fpAcoustidId = acoustidResult.acoustidId;
+            fpMusicbrainzId = acoustidResult.musicbrainzRecordingId;
+          }
+        }
+
+        // Build incoming track meta for scoring
+        const incomingMeta = {
+          title,
+          artist,
+          duration,
+          originalFilename: data.filename.replace(/\.[^/.]+$/, ''),
+          musicbrainzRecordingId: fpMusicbrainzId,
+        };
+
+        // Score against all existing tracks
+        const candidates = await db.query.tracks.findMany();
+        let bestScore = 0;
+        let bestMatch: typeof candidates[number] | null = null;
+
+        for (const candidate of candidates) {
+          const { score } = calculateDuplicateScore(incomingMeta, {
+            title: candidate.title,
+            artist: candidate.artist,
+            duration: candidate.duration,
+            originalFilename: candidate.originalFilename,
+            musicbrainzRecordingId: candidate.musicbrainzRecordingId,
+          });
+          if (score > bestScore) {
+            bestScore = score;
+            bestMatch = candidate;
+          }
+        }
+
+        if (bestScore >= 60 && bestMatch) {
+          // Clean up temp + final files before returning 409
+          try { await unlink(tempFilePath); } catch { /* ignore */ }
+          try { await unlink(finalFilePath); } catch { /* ignore */ }
+
+          const { breakdown } = calculateDuplicateScore(incomingMeta, {
+            title: bestMatch.title,
+            artist: bestMatch.artist,
+            duration: bestMatch.duration,
+            originalFilename: bestMatch.originalFilename,
+            musicbrainzRecordingId: bestMatch.musicbrainzRecordingId,
+          });
+
+          return reply.status(409).send({
+            duplicate: {
+              score: bestScore,
+              breakdown,
+              existingTrack: bestMatch,
+            },
+          });
+        }
+      }
+
       // Analyze audio for Radio mode (BPM, key, energy)
       const analysis = await analyzeAudio(finalFilePath);
       console.log(`Track ${trackId} analysis: BPM=${analysis.bpm}, Key=${analysis.key}, Energy=${analysis.energy}`);
@@ -368,6 +445,9 @@ export async function trackRoutes(app: FastifyInstance) {
         key: analysis.key,
         energy: analysis.energy,
         userId,
+        acoustidFingerprint: fpFingerprint,
+        acoustidId: fpAcoustidId,
+        musicbrainzRecordingId: fpMusicbrainzId,
       });
 
       const track = await db.query.tracks.findFirst({
