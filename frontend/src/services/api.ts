@@ -1,4 +1,5 @@
-import { DuplicateError, AcousticDuplicate } from '@/types/index';
+import { DuplicateError } from '@/types/index';
+import type { AcousticDuplicate } from '@/types/index';
 
 // Use environment variable for API URL, fallback to relative path for dev proxy
 const API_URL = import.meta.env.VITE_API_URL || '/api';

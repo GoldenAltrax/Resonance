@@ -1,5 +1,3 @@
-import type { Track } from '@/services/api';
-
 export type Page = 'home' | 'library' | 'liked' | 'playlists' | 'playlist-detail' | 'search' | 'settings' | 'admin' | 'albums';
 
 export interface Song {
@@ -36,7 +34,14 @@ export interface AcousticDuplicateBreakdown {
 export interface AcousticDuplicate {
   score: number;
   breakdown: AcousticDuplicateBreakdown;
-  existingTrack: Track;
+  existingTrack: {
+    id: string;
+    title: string;
+    artist: string | null;
+    album: string | null;
+    duration: number;
+    coverArt: string | null;
+  };
 }
 
 export class DuplicateError extends Error {
