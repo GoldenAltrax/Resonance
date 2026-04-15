@@ -20,7 +20,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { Track, api } from '@/services/api';
 import { toast } from '@/stores/toastStore';
 import LibraryPickerModal from '@/components/LibraryPickerModal';
-import DuplicateModal, { DuplicateItem, DuplicateAction } from '@/components/ui/DuplicateModal';
+import AcousticDuplicateModal, { PendingDuplicate } from '@/components/ui/AcousticDuplicateModal';
+import { DuplicateError } from '@/types/index';
 import ImportProgressModal from '@/components/ui/ImportProgressModal';
 import DropZone from '@/components/ui/DropZone';
 import SortableTrackRow from '@/components/ui/SortableTrackRow';
@@ -50,9 +51,8 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
   const [showLibraryPicker, setShowLibraryPicker] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0, completed: 0, skipped: 0, currentFile: '' });
-  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
-  const [duplicateItems, setDuplicateItems] = useState<DuplicateItem[]>([]);
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [acousticDuplicates, setAcousticDuplicates] = useState<PendingDuplicate[]>([]);
+  const [showAcousticDuplicateModal, setShowAcousticDuplicateModal] = useState(false);
   const [showPlaylistPicker, setShowPlaylistPicker] = useState<Track | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('default');
   const [showSortMenu, setShowSortMenu] = useState(false);
@@ -70,7 +70,6 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
     uploadTrack,
     addTrackToPlaylist,
     removeTrackFromPlaylist,
-    deleteTrack,
     reorderPlaylistTracks,
   } = usePlaylistStore();
 
@@ -91,22 +90,15 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
     fetchPlaylist(playlistId);
   }, [playlistId, fetchPlaylist]);
 
-  // Helper to extract title from filename
-  const getTitleFromFilename = (filename: string): string => {
-    return filename.replace(/\.[^/.]+$/, '');
-  };
-
-  // Process files after duplicate check/resolution
-  const processFiles = useCallback(async (
-    files: File[],
-    duplicateActions: Map<string, { action: DuplicateAction; existingTrackId: string }>
-  ) => {
+  // Process files — catches DuplicateError per file, shows AcousticDuplicateModal after loop
+  const processFiles = useCallback(async (files: File[]) => {
     cancelRef.current = false;
     setIsImporting(true);
     setImportProgress({ current: 0, total: files.length, completed: 0, skipped: 0, currentFile: '' });
 
     let completed = 0;
     let skipped = 0;
+    const foundDuplicates: PendingDuplicate[] = [];
 
     for (let i = 0; i < files.length; i++) {
       if (cancelRef.current) break;
@@ -116,41 +108,19 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
 
       setImportProgress((prev) => ({ ...prev, current: i, currentFile: file.name }));
 
-      const title = getTitleFromFilename(file.name);
-      const actionInfo = duplicateActions.get(title.toLowerCase());
-
-      if (actionInfo) {
-        if (actionInfo.action === 'skip') {
-          skipped++;
-          setImportProgress((prev) => ({ ...prev, current: i + 1, skipped }));
-          continue;
-        } else if (actionInfo.action === 'replace') {
-          try {
-            await deleteTrack(actionInfo.existingTrackId, true); // silent mode
-            const track = await uploadTrack(file, true); // silent mode
-            await addTrackToPlaylist(playlistId, track.id, true); // silent mode
-            completed++;
-          } catch {
-            skipped++;
-          }
+      try {
+        const track = await uploadTrack(file, true);
+        await addTrackToPlaylist(playlistId, track.id);
+        completed++;
+      } catch (err) {
+        if (err instanceof DuplicateError || (err instanceof Error && err.name === 'DuplicateError')) {
+          const dupErr = err as DuplicateError;
+          foundDuplicates.push({ file, duplicate: dupErr.duplicate });
         } else {
-          try {
-            const track = await uploadTrack(file, true); // silent mode
-            await addTrackToPlaylist(playlistId, track.id, true); // silent mode
-            completed++;
-          } catch {
-            skipped++;
-          }
-        }
-      } else {
-        try {
-          const track = await uploadTrack(file, true); // silent mode
-          await addTrackToPlaylist(playlistId, track.id, true); // silent mode
-          completed++;
-        } catch {
           skipped++;
         }
       }
+
       setImportProgress((prev) => ({ ...prev, current: i + 1, completed, skipped }));
     }
 
@@ -159,13 +129,17 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
 
     setIsImporting(false);
     setImportProgress({ current: 0, total: 0, completed: 0, skipped: 0, currentFile: '' });
-    setPendingFiles([]);
     setShowAddMenu(false);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-  }, [deleteTrack, uploadTrack, addTrackToPlaylist, playlistId, fetchPlaylist]);
+
+    if (foundDuplicates.length > 0) {
+      setAcousticDuplicates(foundDuplicates);
+      setShowAcousticDuplicateModal(true);
+    }
+  }, [uploadTrack, addTrackToPlaylist, playlistId, fetchPlaylist]);
 
   const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -187,55 +161,20 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
       fileArray.push(...validFiles);
     }
 
-    const trackMeta = fileArray.map((file) => ({
-      title: getTitleFromFilename(file.name),
-      artist: null as string | null,
-    }));
+    await processFiles(fileArray);
+  };
 
+  const handleUploadAnyway = useCallback(async (file: File) => {
     try {
-      const result = await api.checkDuplicates(trackMeta);
-
-      if (result.duplicates.length > 0) {
-        const items: DuplicateItem[] = result.duplicates.map((dup) => ({
-          fileName: fileArray.find((f) =>
-            getTitleFromFilename(f.name).toLowerCase() === dup.title.toLowerCase()
-          )?.name || dup.title,
-          title: dup.title,
-          artist: dup.artist,
-          existingTrackId: dup.existingTrackId,
-          action: 'skip' as DuplicateAction,
-        }));
-
-        setDuplicateItems(items);
-        setPendingFiles(fileArray);
-        setShowDuplicateModal(true);
-      } else {
-        await processFiles(fileArray, new Map());
-      }
-    } catch {
-      await processFiles(fileArray, new Map());
+      const track = await api.uploadTrackForce(file);
+      await addTrackToPlaylist(playlistId, track.id);
+      fetchPlaylist(playlistId);
+      toast.success(`Uploaded "${file.name.replace(/\.[^/.]+$/, '')}"`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
     }
-  };
-
-  const handleDuplicateConfirm = async (items: DuplicateItem[]) => {
-    setShowDuplicateModal(false);
-    const duplicateActions = new Map<string, { action: DuplicateAction; existingTrackId: string }>();
-    for (const item of items) {
-      duplicateActions.set(item.title.toLowerCase(), {
-        action: item.action,
-        existingTrackId: item.existingTrackId,
-      });
-    }
-    await processFiles(pendingFiles, duplicateActions);
-  };
-
-  const handleDuplicateCancel = () => {
-    setShowDuplicateModal(false);
-    setPendingFiles([]);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
+    setAcousticDuplicates((prev) => prev.filter((d) => d.file !== file));
+  }, [addTrackToPlaylist, playlistId, fetchPlaylist]);
 
   const handleCancelImport = () => {
     cancelRef.current = true;
@@ -337,34 +276,7 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
       files = validFiles;
     }
 
-    const trackMeta = files.map((file) => ({
-      title: getTitleFromFilename(file.name),
-      artist: null as string | null,
-    }));
-
-    try {
-      const result = await api.checkDuplicates(trackMeta);
-
-      if (result.duplicates.length > 0) {
-        const items: DuplicateItem[] = result.duplicates.map((dup) => ({
-          fileName: files.find((f) =>
-            getTitleFromFilename(f.name).toLowerCase() === dup.title.toLowerCase()
-          )?.name || dup.title,
-          title: dup.title,
-          artist: dup.artist,
-          existingTrackId: dup.existingTrackId,
-          action: 'skip' as DuplicateAction,
-        }));
-
-        setDuplicateItems(items);
-        setPendingFiles(files);
-        setShowDuplicateModal(true);
-      } else {
-        await processFiles(files, new Map());
-      }
-    } catch {
-      await processFiles(files, new Map());
-    }
+    await processFiles(files);
   }, [processFiles]);
 
   // Handle removing track from playlist
@@ -748,12 +660,15 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
         onAddTracks={handleAddFromLibrary}
       />
 
-      {/* Duplicate Detection Modal */}
-      <DuplicateModal
-        isOpen={showDuplicateModal}
-        duplicates={duplicateItems}
-        onClose={handleDuplicateCancel}
-        onConfirm={handleDuplicateConfirm}
+      {/* Acoustic Duplicate Modal */}
+      <AcousticDuplicateModal
+        isOpen={showAcousticDuplicateModal}
+        pendingDuplicates={acousticDuplicates}
+        onClose={() => {
+          setShowAcousticDuplicateModal(false);
+          setAcousticDuplicates([]);
+        }}
+        onUploadAnyway={handleUploadAnyway}
       />
 
       {/* Import Progress Modal */}
