@@ -6,7 +6,8 @@ import { usePlayerStore } from '@/stores/playerStore';
 import { useAuthStore } from '@/stores/authStore';
 import { Track, api } from '@/services/api';
 import { toast } from '@/stores/toastStore';
-import DuplicateModal, { DuplicateItem, DuplicateAction } from '@/components/ui/DuplicateModal';
+import AcousticDuplicateModal, { PendingDuplicate } from '@/components/ui/AcousticDuplicateModal';
+import { DuplicateError } from '@/types/index';
 import ImportProgressModal from '@/components/ui/ImportProgressModal';
 import DropZone from '@/components/ui/DropZone';
 import { useFavoritesStore } from '@/stores/favoritesStore';
@@ -65,9 +66,8 @@ const LibraryView = () => {
   const [trackToDelete, setTrackToDelete] = useState<Track | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, completed: 0, skipped: 0, currentFile: '' });
-  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
-  const [duplicateItems, setDuplicateItems] = useState<DuplicateItem[]>([]);
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [acousticDuplicates, setAcousticDuplicates] = useState<PendingDuplicate[]>([]);
+  const [showAcousticDuplicateModal, setShowAcousticDuplicateModal] = useState(false);
   const [sortOption, setSortOption] = useState<SortOption>(getStoredSort);
   const [showSortDropdown, setShowSortDropdown] = useState(false);
 
@@ -151,88 +151,66 @@ const LibraryView = () => {
     });
   };
 
-  // Helper to extract title from filename
-  const getTitleFromFilename = (filename: string): string => {
-    return filename.replace(/\.[^/.]+$/, ''); // Remove extension
-  };
-
-  // Process files after duplicate check/resolution
-  const processFiles = useCallback(async (
-    files: File[],
-    duplicateActions: Map<string, { action: DuplicateAction; existingTrackId: string }>
-  ) => {
+  // Process files — catches DuplicateError per file, shows AcousticDuplicateModal after loop
+  const processFiles = useCallback(async (files: File[]) => {
     cancelRef.current = false;
     setIsUploading(true);
     setUploadProgress({ current: 0, total: files.length, completed: 0, skipped: 0, currentFile: '' });
 
     let completed = 0;
     let skipped = 0;
+    const foundDuplicates: PendingDuplicate[] = [];
 
     for (let i = 0; i < files.length; i++) {
-      // Check if cancelled
-      if (cancelRef.current) {
-        break;
-      }
+      if (cancelRef.current) break;
 
       const file = files[i];
       if (!file) continue;
 
       setUploadProgress((prev) => ({ ...prev, current: i, currentFile: file.name }));
 
-      const title = getTitleFromFilename(file.name);
-      const actionInfo = duplicateActions.get(title.toLowerCase());
-
-      if (actionInfo) {
-        // This file was identified as a duplicate
-        if (actionInfo.action === 'skip') {
-          skipped++;
-          setUploadProgress((prev) => ({ ...prev, current: i + 1, skipped }));
-          continue;
-        } else if (actionInfo.action === 'replace') {
-          // Delete existing track first, then upload new one
-          try {
-            await deleteTrack(actionInfo.existingTrackId, true); // silent mode
-            await uploadTrack(file, true); // silent mode
-            completed++;
-          } catch {
-            skipped++;
-          }
+      try {
+        await uploadTrack(file, true);
+        completed++;
+      } catch (err) {
+        if (err instanceof DuplicateError || (err instanceof Error && err.name === 'DuplicateError')) {
+          const dupErr = err as DuplicateError;
+          foundDuplicates.push({ file, duplicate: dupErr.duplicate });
         } else {
-          // 'add' - Add anyway
-          try {
-            await uploadTrack(file, true); // silent mode
-            completed++;
-          } catch {
-            skipped++;
-          }
-        }
-      } else {
-        // Not a duplicate, upload normally
-        try {
-          await uploadTrack(file, true); // silent mode
-          completed++;
-        } catch {
           skipped++;
         }
       }
+
       setUploadProgress((prev) => ({ ...prev, current: i + 1, completed, skipped }));
     }
 
-    // Refresh library once at the end
     await fetchLibrary();
 
     setIsUploading(false);
     setUploadProgress({ current: 0, total: 0, completed: 0, skipped: 0, currentFile: '' });
-    setPendingFiles([]);
 
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+    if (fileInputRef.current) fileInputRef.current.value = '';
+
+    if (foundDuplicates.length > 0) {
+      setAcousticDuplicates(foundDuplicates);
+      setShowAcousticDuplicateModal(true);
     }
-  }, [deleteTrack, uploadTrack, fetchLibrary]);
+  }, [uploadTrack, fetchLibrary]);
 
   const handleCancelImport = () => {
     cancelRef.current = true;
   };
+
+  const handleUploadAnyway = useCallback(async (file: File) => {
+    try {
+      await api.uploadTrackForce(file);
+      await fetchLibrary();
+      toast.success(`Uploaded "${file.name.replace(/\.[^/.]+$/, '')}"`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
+    }
+    setAcousticDuplicates((prev) => prev.filter((d) => d.file !== file));
+  }, [fetchLibrary]);
 
   const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -245,74 +223,16 @@ const LibraryView = () => {
     if (oversizedFiles.length > 0) {
       const names = oversizedFiles.slice(0, 3).map((f) => f.name).join(', ');
       toast.error(`Files too large (max 50MB): ${names}${oversizedFiles.length > 3 ? ` and ${oversizedFiles.length - 3} more` : ''}`);
-      // Filter out oversized files
       const validFiles = fileArray.filter((file) => file.size <= MAX_TRACK_SIZE);
       if (validFiles.length === 0) {
         if (fileInputRef.current) fileInputRef.current.value = '';
         return;
       }
-      // Continue with valid files only
       fileArray.length = 0;
       fileArray.push(...validFiles);
     }
 
-    // Extract metadata from filenames for duplicate check
-    const trackMeta = fileArray.map((file) => ({
-      title: getTitleFromFilename(file.name),
-      artist: null as string | null, // We don't know artist from filename
-    }));
-
-    try {
-      // Check for duplicates
-      const result = await api.checkDuplicates(trackMeta);
-
-      if (result.duplicates.length > 0) {
-        // Create duplicate items for the modal
-        const items: DuplicateItem[] = result.duplicates.map((dup) => ({
-          fileName: fileArray.find((f) =>
-            getTitleFromFilename(f.name).toLowerCase() === dup.title.toLowerCase()
-          )?.name || dup.title,
-          title: dup.title,
-          artist: dup.artist,
-          existingTrackId: dup.existingTrackId,
-          action: 'skip' as DuplicateAction,
-        }));
-
-        setDuplicateItems(items);
-        setPendingFiles(fileArray);
-        setShowDuplicateModal(true);
-      } else {
-        // No duplicates, upload all files directly
-        await processFiles(fileArray, new Map());
-      }
-    } catch {
-      // If duplicate check fails, proceed with upload anyway
-      await processFiles(fileArray, new Map());
-    }
-  };
-
-  const handleDuplicateConfirm = async (items: DuplicateItem[]) => {
-    setShowDuplicateModal(false);
-
-    // Build a map of duplicate actions
-    const duplicateActions = new Map<string, { action: DuplicateAction; existingTrackId: string }>();
-    for (const item of items) {
-      duplicateActions.set(item.title.toLowerCase(), {
-        action: item.action,
-        existingTrackId: item.existingTrackId,
-      });
-    }
-
-    // Process files with the user's choices
-    await processFiles(pendingFiles, duplicateActions);
-  };
-
-  const handleDuplicateCancel = () => {
-    setShowDuplicateModal(false);
-    setPendingFiles([]);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    await processFiles(fileArray);
   };
 
   const handlePlayTrack = (track: Track) => {
@@ -376,35 +296,7 @@ const LibraryView = () => {
       files = validFiles;
     }
 
-    // Extract metadata from filenames for duplicate check
-    const trackMeta = files.map((file) => ({
-      title: getTitleFromFilename(file.name),
-      artist: null as string | null,
-    }));
-
-    try {
-      const result = await api.checkDuplicates(trackMeta);
-
-      if (result.duplicates.length > 0) {
-        const items: DuplicateItem[] = result.duplicates.map((dup) => ({
-          fileName: files.find((f) =>
-            getTitleFromFilename(f.name).toLowerCase() === dup.title.toLowerCase()
-          )?.name || dup.title,
-          title: dup.title,
-          artist: dup.artist,
-          existingTrackId: dup.existingTrackId,
-          action: 'skip' as DuplicateAction,
-        }));
-
-        setDuplicateItems(items);
-        setPendingFiles(files);
-        setShowDuplicateModal(true);
-      } else {
-        await processFiles(files, new Map());
-      }
-    } catch {
-      await processFiles(files, new Map());
-    }
+    await processFiles(files);
   }, [processFiles]);
 
   return (
@@ -777,12 +669,15 @@ const LibraryView = () => {
         </div>
       )}
 
-      {/* Duplicate Detection Modal */}
-      <DuplicateModal
-        isOpen={showDuplicateModal}
-        duplicates={duplicateItems}
-        onClose={handleDuplicateCancel}
-        onConfirm={handleDuplicateConfirm}
+      {/* Acoustic Duplicate Detection Modal */}
+      <AcousticDuplicateModal
+        isOpen={showAcousticDuplicateModal}
+        pendingDuplicates={acousticDuplicates}
+        onClose={() => {
+          setShowAcousticDuplicateModal(false);
+          setAcousticDuplicates([]);
+        }}
+        onUploadAnyway={handleUploadAnyway}
       />
 
       {/* Import Progress Modal */}
