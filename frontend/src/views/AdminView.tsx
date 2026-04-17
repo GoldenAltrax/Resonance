@@ -1,5 +1,5 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { Users, Music, ListMusic, Ticket, Plus, Trash2, Copy, Check, X, RefreshCw, ToggleLeft, ToggleRight, Terminal } from 'lucide-react';
+import { Users, Music, ListMusic, Ticket, Plus, Trash2, Copy, Check, X, RefreshCw, ToggleLeft, ToggleRight, Terminal, Fingerprint } from 'lucide-react';
 import { api, AdminStats, AdminUser, InviteCode } from '@/services/api';
 import { toast } from '@/stores/toastStore';
 import DebugPanel from '@/components/DebugPanel';
@@ -17,6 +17,7 @@ const AdminView = () => {
   const [newCodeCustom, setNewCodeCustom] = useState('');
   const [newCodeMaxUses, setNewCodeMaxUses] = useState<string>('');
   const [isCreating, setIsCreating] = useState(false);
+  const [isFingerprintingAll, setIsFingerprintingAll] = useState(false);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -84,6 +85,18 @@ const AdminView = () => {
       toast.success('Invite code deleted');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete code');
+    }
+  };
+
+  const handleFingerprintAll = async () => {
+    setIsFingerprintingAll(true);
+    try {
+      const result = await api.fingerprintAll();
+      toast.success(`Fingerprinting complete — ${result.processed}/${result.total} processed, ${result.failed} failed`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Fingerprinting failed');
+    } finally {
+      setIsFingerprintingAll(false);
     }
   };
 
@@ -343,7 +356,31 @@ const AdminView = () => {
       )}
 
       {/* Debug Tab */}
-      {activeTab === 'debug' && <DebugPanel />}
+      {activeTab === 'debug' && (
+        <div className="space-y-6">
+          <div className="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6">
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-white mb-1">Acoustic Fingerprinting</h3>
+                <p className="text-sm text-zinc-500">
+                  Generate fingerprints for all tracks that haven't been fingerprinted yet.
+                  Requires <code className="text-zinc-400 text-xs bg-zinc-800 px-1 py-0.5 rounded">fpcalc</code> and a valid{' '}
+                  <code className="text-zinc-400 text-xs bg-zinc-800 px-1 py-0.5 rounded">ACOUSTID_API_KEY</code>.
+                </p>
+              </div>
+              <button
+                onClick={handleFingerprintAll}
+                disabled={isFingerprintingAll}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0 ml-6"
+              >
+                <Fingerprint className={`w-4 h-4 ${isFingerprintingAll ? 'animate-pulse' : ''}`} />
+                {isFingerprintingAll ? 'Fingerprinting...' : 'Fingerprint Unprocessed Tracks'}
+              </button>
+            </div>
+          </div>
+          <DebugPanel />
+        </div>
+      )}
 
       {/* Create Invite Code Modal */}
       {showCreateModal && (
