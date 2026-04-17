@@ -1,7 +1,7 @@
 FROM node:20-alpine
 
 # Install build dependencies for native modules (better-sqlite3) and ffmpeg for audio compression
-RUN apk add --no-cache python3 make g++ ffmpeg
+RUN apk add --no-cache python3 make g++ ffmpeg chromaprint
 
 WORKDIR /app
 
