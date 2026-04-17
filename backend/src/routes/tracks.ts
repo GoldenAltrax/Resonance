@@ -16,14 +16,6 @@ import { generateFingerprint, lookupAcoustID, calculateDuplicateScore } from '..
 
 const execFileAsync = promisify(execFile);
 
-// Schema for duplicate check request
-const checkDuplicatesSchema = z.object({
-  tracks: z.array(z.object({
-    title: z.string(),
-    artist: z.string().nullable(),
-  })),
-});
-
 // Schema for logging a track skip
 const skipTrackSchema = z.object({
   position: z.number().int().min(0).max(100),
@@ -380,6 +372,7 @@ export async function trackRoutes(app: FastifyInstance) {
           duration,
           originalFilename: data.filename.replace(/\.[^/.]+$/, ''),
           musicbrainzRecordingId: fpMusicbrainzId,
+          acoustidFingerprint: fpFingerprint,
         };
 
         // Score against all existing tracks
@@ -390,6 +383,7 @@ export async function trackRoutes(app: FastifyInstance) {
           duration: tracks.duration,
           originalFilename: tracks.originalFilename,
           musicbrainzRecordingId: tracks.musicbrainzRecordingId,
+          acoustidFingerprint: tracks.acoustidFingerprint,
         }).from(tracks);
         let bestScore = 0;
         let bestMatch: typeof candidates[number] | null = null;
@@ -402,6 +396,7 @@ export async function trackRoutes(app: FastifyInstance) {
             duration: candidate.duration,
             originalFilename: candidate.originalFilename,
             musicbrainzRecordingId: candidate.musicbrainzRecordingId,
+            acoustidFingerprint: candidate.acoustidFingerprint,
           });
           if (result.score > bestScore) {
             bestScore = result.score;
@@ -544,67 +539,6 @@ export async function trackRoutes(app: FastifyInstance) {
 
     // Redirect to static file server
     return reply.redirect(`/uploads/${track.filePath}`);
-  });
-
-  // Check for duplicate tracks - ADMIN ONLY
-  app.post('/check-duplicates', {
-    preHandler: adminMiddleware,
-  }, async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-      const body = checkDuplicatesSchema.parse(request.body);
-      const duplicates: Array<{
-        title: string;
-        artist: string | null;
-        existingTrackId: string;
-        existingTrack: typeof tracks.$inferSelect;
-      }> = [];
-
-      // Extract normalized titles for database query
-      const normalizedTitles = body.tracks.map(t => t.title.toLowerCase().trim());
-
-      // Query only tracks that might match (filter at database level for performance)
-      const potentialMatches = await db.query.tracks.findMany({
-        where: sql`lower(${tracks.originalFilename}) IN (${sql.join(normalizedTitles.map(t => sql`${t}`), sql`, `)}) OR lower(${tracks.title}) IN (${sql.join(normalizedTitles.map(t => sql`${t}`), sql`, `)})`
-      });
-
-      // Check each incoming track against potential matches
-      for (const incoming of body.tracks) {
-        const normalizedTitle = incoming.title.toLowerCase().trim();
-
-        const match = potentialMatches.find((existing) => {
-          const existingFilename = existing.originalFilename?.toLowerCase().trim();
-          const existingTitle = existing.title.toLowerCase().trim();
-
-          // Match by original filename first (most accurate for file re-uploads)
-          if (existingFilename && existingFilename === normalizedTitle) {
-            return true;
-          }
-
-          // Fallback: match by title for legacy tracks without originalFilename
-          if (!existingFilename && existingTitle === normalizedTitle) {
-            return true;
-          }
-
-          return false;
-        });
-
-        if (match) {
-          duplicates.push({
-            title: incoming.title,
-            artist: match.artist,
-            existingTrackId: match.id,
-            existingTrack: match,
-          });
-        }
-      }
-
-      return reply.send({ duplicates });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return reply.status(400).send({ error: 'Invalid request body', details: error.errors });
-      }
-      throw error;
-    }
   });
 
   // Get similar tracks for Radio mode - ANY AUTHENTICATED USER

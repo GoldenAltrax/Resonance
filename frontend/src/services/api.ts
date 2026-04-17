@@ -236,13 +236,6 @@ class ApiClient {
     });
   }
 
-  async checkDuplicates(tracks: Array<{ title: string; artist: string | null }>) {
-    return this.request<DuplicateCheckResult>('/tracks/check-duplicates', {
-      method: 'POST',
-      body: JSON.stringify({ tracks }),
-    });
-  }
-
   // Returns an audio-playable URL for a track.
   //
   // Strategy per platform:
@@ -582,17 +575,6 @@ export interface InviteCode {
   createdBy: string | null;
   createdAt: string;
   expiresAt: string | null;
-}
-
-export interface DuplicateInfo {
-  title: string;
-  artist: string | null;
-  existingTrackId: string;
-  existingTrack: Track;
-}
-
-export interface DuplicateCheckResult {
-  duplicates: DuplicateInfo[];
 }
 
 export interface Favorite {

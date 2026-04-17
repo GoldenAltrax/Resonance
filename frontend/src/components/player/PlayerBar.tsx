@@ -22,10 +22,6 @@ import { usePlayerStore } from '@/stores/playerStore';
 import { formatTime } from '@/hooks/useAudioPlayer';
 import { useFavoritesStore } from '@/stores/favoritesStore';
 import { api } from '@/services/api';
-import LyricsPanel from './LyricsPanel';
-import QueuePanel from './QueuePanel';
-import EqualizerPanel from './EqualizerPanel';
-import DownloadManager from '@/components/DownloadManager';
 import { AlbumArt } from '@/components/ui/AlbumArt';
 
 const SLEEP_TIMER_OPTIONS = [
@@ -358,12 +354,6 @@ export const PlayerBar = () => {
           />
         </div>
       </div>
-
-      {/* Panels */}
-      <LyricsPanel />
-      <QueuePanel />
-      <EqualizerPanel />
-      {showDownloadPanel && <DownloadManager />}
 
     </div>
   );
