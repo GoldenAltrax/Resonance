@@ -25,6 +25,7 @@ export interface User {
 // ─── Acoustic Duplicate Detection ───────────────────────────────────────────
 
 export interface AcousticDuplicateBreakdown {
+  fingerprint: boolean;
   mbid: boolean;
   duration: boolean;
   title: boolean;

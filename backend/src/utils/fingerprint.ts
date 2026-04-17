@@ -16,6 +16,7 @@ export interface AcoustIDResult {
 }
 
 export interface DuplicateScoreBreakdown {
+  fingerprint: boolean;
   mbid: boolean;
   duration: boolean;
   title: boolean;
@@ -33,6 +34,7 @@ export interface IncomingTrackMeta {
   duration: number;
   originalFilename: string;
   musicbrainzRecordingId: string | null;
+  acoustidFingerprint?: string | null;
 }
 
 export interface ExistingTrackMeta {
@@ -41,6 +43,7 @@ export interface ExistingTrackMeta {
   duration: number;
   originalFilename: string | null;
   musicbrainzRecordingId: string | null;
+  acoustidFingerprint?: string | null;
 }
 
 // ─── generateFingerprint ────────────────────────────────────────────────────
@@ -127,11 +130,20 @@ export function calculateDuplicateScore(
   existing: ExistingTrackMeta
 ): DuplicateScoreResult {
   const breakdown: DuplicateScoreBreakdown = {
+    fingerprint: false,
     mbid: false,
     duration: false,
     title: false,
     filename: false,
   };
+
+  if (
+    incoming.acoustidFingerprint &&
+    existing.acoustidFingerprint &&
+    incoming.acoustidFingerprint === existing.acoustidFingerprint
+  ) {
+    breakdown.fingerprint = true;
+  }
 
   if (
     incoming.musicbrainzRecordingId &&
@@ -157,11 +169,14 @@ export function calculateDuplicateScore(
     breakdown.filename = true;
   }
 
-  const score =
+  const score = Math.min(
+    100,
+    (breakdown.fingerprint ? 50 : 0) +
     (breakdown.mbid ? 50 : 0) +
     (breakdown.duration ? 20 : 0) +
     (breakdown.title ? 15 : 0) +
-    (breakdown.filename ? 15 : 0);
+    (breakdown.filename ? 15 : 0)
+  );
 
   return { score, breakdown };
 }

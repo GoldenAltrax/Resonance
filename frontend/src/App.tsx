@@ -22,6 +22,10 @@ import SearchView from '@/views/SearchView';
 import AdminView from '@/views/AdminView';
 import AlbumsView from '@/views/AlbumsView';
 import PlayerBar from '@/components/player/PlayerBar';
+import LyricsPanel from '@/components/player/LyricsPanel';
+import QueuePanel from '@/components/player/QueuePanel';
+import EqualizerPanel from '@/components/player/EqualizerPanel';
+import DownloadManager from '@/components/DownloadManager';
 import { ToastContainer } from '@/components/ui/Toast';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import KeyboardShortcutsModal from '@/components/ui/KeyboardShortcutsModal';
@@ -47,7 +51,7 @@ const App = () => {
 
   const { isAuthenticated, token, user, checkAuth } = useAuthStore();
   const { playlists, fetchPlaylists } = usePlaylistStore();
-  const { currentTrack, showLyrics, showQueue, loadPreferences } = usePlayerStore();
+  const { currentTrack, showLyrics, showQueue, showDownloadPanel, loadPreferences } = usePlayerStore();
   const { startMonitoring } = useNetworkStore();
   const { initCache } = useDownloadStore();
   const { isAndroid } = usePlatform();
@@ -242,6 +246,10 @@ const App = () => {
           </div>
         </main>
         <PlayerBar />
+        <LyricsPanel />
+        <QueuePanel />
+        <EqualizerPanel />
+        {showDownloadPanel && <DownloadManager />}
         <ToastContainer />
         <KeyboardShortcutsModal
           isOpen={showShortcutsModal}

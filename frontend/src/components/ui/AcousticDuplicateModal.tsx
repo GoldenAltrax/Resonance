@@ -147,6 +147,7 @@ const AcousticDuplicateModal = ({
 
               {/* Breakdown */}
               <div className="space-y-2">
+                <BreakdownRow label="Acoustic Fingerprint" matched={duplicate.breakdown.fingerprint} detail="identical audio content" />
                 <BreakdownRow label="MusicBrainz ID" matched={duplicate.breakdown.mbid} detail="same recording, confirmed cross-source" />
                 <BreakdownRow label="Duration" matched={duplicate.breakdown.duration} detail="within 2 seconds" />
                 <BreakdownRow label="Title / Artist" matched={duplicate.breakdown.title} detail="exact match" />
