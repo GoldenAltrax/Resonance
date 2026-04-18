@@ -1,7 +1,7 @@
 import { useState, useRef, FormEvent } from 'react';
 import { Plus, X, Upload, MoreVertical, Play, Loader2, Edit2, Trash2, Image } from 'lucide-react';
 import { usePlaylistStore } from '@/stores/playlistStore';
-import { Playlist } from '@/services/api';
+import { api, Playlist } from '@/services/api';
 
 interface PlaylistsViewProps {
   onPlaylistClick: (id: string) => void;
@@ -152,7 +152,7 @@ const PlaylistsView = ({ onPlaylistClick }: PlaylistsViewProps) => {
     if (playlist.coverImage) {
       return playlist.coverImage.startsWith('http')
         ? playlist.coverImage
-        : `/uploads/${playlist.coverImage}?t=${Date.now()}`;
+        : api.getUploadUrl(playlist.coverImage, { bust: true });
     }
     return `https://picsum.photos/seed/${playlist.id}/400/400`;
   };

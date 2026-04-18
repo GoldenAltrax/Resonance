@@ -123,7 +123,7 @@ const SettingsView = () => {
   const profileImageUrl = user?.profileImage
     ? user.profileImage.startsWith('http')
       ? user.profileImage
-      : `/uploads/${user.profileImage}?t=${Date.now()}`
+      : api.getUploadUrl(user.profileImage, { bust: true })
     : `https://api.dicebear.com/7.x/initials/svg?seed=${user?.username || 'User'}`;
 
   if (isLoggingOut) {

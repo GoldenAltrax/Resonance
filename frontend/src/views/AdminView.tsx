@@ -243,7 +243,7 @@ const AdminView = () => {
                   <div className="w-10 h-10 rounded-full overflow-hidden bg-zinc-800">
                     <img
                       src={u.profileImage
-                        ? (u.profileImage.startsWith('http') ? u.profileImage : `/uploads/${u.profileImage}`)
+                        ? (u.profileImage.startsWith('http') ? u.profileImage : api.getUploadUrl(u.profileImage))
                         : `https://api.dicebear.com/7.x/initials/svg?seed=${u.username}`
                       }
                       alt={u.username}
