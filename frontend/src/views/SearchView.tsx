@@ -512,7 +512,7 @@ const SearchView = () => {
                   >
                     <div className="w-10 h-10 bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0">
                       <img
-                        src={playlist.coverImage ? `/uploads/${playlist.coverImage}` : `https://picsum.photos/seed/${playlist.id}/100/100`}
+                        src={playlist.coverImage ? api.getUploadUrl(playlist.coverImage) : `https://picsum.photos/seed/${playlist.id}/100/100`}
                         alt={playlist.name}
                         className="w-full h-full object-cover"
                       />

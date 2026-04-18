@@ -71,7 +71,7 @@ const HomeView = ({ onNavigate, onPlaylistClick }: HomeViewProps) => {
     if (playlist.coverImage) {
       return playlist.coverImage.startsWith('http')
         ? playlist.coverImage
-        : `/uploads/${playlist.coverImage}`;
+        : api.getUploadUrl(playlist.coverImage);
     }
     return `https://picsum.photos/seed/${playlist.id}/500/500`;
   };

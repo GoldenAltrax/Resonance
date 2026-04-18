@@ -305,7 +305,7 @@ const SortableTrackRow = ({
                         >
                           <div className="w-8 h-8 bg-zinc-800 rounded overflow-hidden flex-shrink-0">
                             <img
-                              src={playlist.coverImage ? `/uploads/${playlist.coverImage}` : `https://picsum.photos/seed/${playlist.id}/40/40`}
+                              src={playlist.coverImage ? api.getUploadUrl(playlist.coverImage) : `https://picsum.photos/seed/${playlist.id}/40/40`}
                               alt={playlist.name}
                               className="w-full h-full object-cover"
                             />

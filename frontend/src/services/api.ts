@@ -336,11 +336,26 @@ class ApiClient {
     return res.albums;
   }
 
-  // Returns the URL for a track's cover art image (for use in <img> src).
-  // Falls back to undefined if the track has no cover art.
+  // Returns the base URL for uploaded files (strips /api suffix from API_URL).
+  // e.g. if API_URL = 'https://server.com/api', this returns 'https://server.com'.
+  // e.g. if API_URL = '/api' (dev proxy), this returns '' (relative URLs work fine).
+  private get uploadBase(): string {
+    return API_URL.replace(/\/api$/, '');
+  }
+
+  // Returns the URL for any uploaded file (cover art, profile image, playlist cover).
+  // Pass { bust: true } to append a cache-busting timestamp (e.g. after upload).
+  getUploadUrl(path: string, opts?: { bust?: boolean }): string {
+    const params = new URLSearchParams();
+    if (this.token) params.set('token', this.token);
+    if (opts?.bust) params.set('t', String(Date.now()));
+    const query = params.toString();
+    return `${this.uploadBase}/uploads/${path}${query ? `?${query}` : ''}`;
+  }
+
+  // Alias kept for callers that pass coverArt directly.
   getTrackCoverUrl(coverArt: string): string {
-    const tokenParam = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
-    return `${API_URL}/uploads/${coverArt}${tokenParam}`;
+    return this.getUploadUrl(coverArt);
   }
 
   // User preferences (cross-device sync)

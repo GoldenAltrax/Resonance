@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
 import { formatTime } from '@/hooks/useAudioPlayer';
+import { ProgressScrubber } from './ProgressScrubber';
 import { useFavoritesStore } from '@/stores/favoritesStore';
 import { api } from '@/services/api';
 import { AlbumArt } from '@/components/ui/AlbumArt';
@@ -97,14 +98,9 @@ export const PlayerBar = () => {
   if (!currentTrack) return null;
 
   const isCurrentFavorited = isFavorited(currentTrack.id);
-  const progressPct = (progress / (duration || 1)) * 100;
   const coverUrl = currentTrack.coverArt
     ? api.getTrackCoverUrl(currentTrack.coverArt)
     : null;
-
-  const handleProgressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    seek(parseFloat(e.target.value));
-  };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setVolume(parseFloat(e.target.value));
@@ -232,21 +228,11 @@ export const PlayerBar = () => {
         {/* Progress Bar */}
         <div className="w-full flex items-center gap-2.5">
           <span className="text-[11px] text-zinc-600 w-9 text-right tabular-nums">{formatTime(progress)}</span>
-          <div className="flex-1 relative group">
-            <input
-              type="range"
-              min="0"
-              max={duration || 100}
-              value={progress}
-              onChange={handleProgressChange}
-              aria-label="Track progress"
-              aria-valuemin={0}
-              aria-valuemax={duration || 100}
-              aria-valuenow={progress}
-              className="range-slider w-full"
-              style={{
-                background: `linear-gradient(to right, white ${progressPct}%, rgb(39 39 42) ${progressPct}%)`,
-              }}
+          <div className="flex-1">
+            <ProgressScrubber
+              progress={progress}
+              duration={duration}
+              onSeek={seek}
             />
           </div>
           <span className="text-[11px] text-zinc-600 w-9 tabular-nums">{formatTime(duration)}</span>

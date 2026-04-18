@@ -259,7 +259,7 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
     if (currentPlaylist?.coverImage) {
       return currentPlaylist.coverImage.startsWith('http')
         ? currentPlaylist.coverImage
-        : `/uploads/${currentPlaylist.coverImage}?t=${Date.now()}`;
+        : api.getUploadUrl(currentPlaylist.coverImage, { bust: true });
     }
     return `https://picsum.photos/seed/${currentPlaylist?.id}/400/400`;
   };
@@ -717,7 +717,7 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
                           <img
                             src={
                               playlist.coverImage
-                                ? `/uploads/${playlist.coverImage}`
+                                ? api.getUploadUrl(playlist.coverImage)
                                 : `https://picsum.photos/seed/${playlist.id}/48/48`
                             }
                             alt={playlist.name}
@@ -780,7 +780,7 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
                           <img
                             src={
                               playlist.coverImage
-                                ? `/uploads/${playlist.coverImage}`
+                                ? api.getUploadUrl(playlist.coverImage)
                                 : `https://picsum.photos/seed/${playlist.id}/48/48`
                             }
                             alt={playlist.name}

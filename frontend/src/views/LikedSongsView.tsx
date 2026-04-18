@@ -342,7 +342,7 @@ const LikedSongsView = () => {
                           <img
                             src={
                               playlist.coverImage
-                                ? `/uploads/${playlist.coverImage}`
+                                ? api.getUploadUrl(playlist.coverImage)
                                 : `https://picsum.photos/seed/${playlist.id}/48/48`
                             }
                             alt={playlist.name}
