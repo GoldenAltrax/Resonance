@@ -61,7 +61,6 @@ interface PlayerState {
   repeat: 'none' | 'one' | 'all';
   showLyrics: boolean;
   showQueue: boolean;
-  showDownloadPanel: boolean;
 
   // Crossfade
   crossfadeEnabled: boolean;
@@ -104,7 +103,6 @@ interface PlayerState {
   toggleRepeat: () => void;
   toggleLyrics: () => void;
   toggleQueue: () => void;
-  toggleDownloadPanel: () => void;
   setCrossfade: (enabled: boolean, duration?: number) => void;
   setEqGain: (bandIndex: number, gain: number) => void;
   setEqPreset: (preset: string, gains: number[]) => void;
@@ -142,7 +140,6 @@ export const usePlayerStore = create<PlayerState>()(
       repeat: 'none',
       showLyrics: false,
       showQueue: false,
-      showDownloadPanel: false,
       crossfadeEnabled: false,
       crossfadeDuration: 3,
       eqEnabled: false,
@@ -336,8 +333,6 @@ export const usePlayerStore = create<PlayerState>()(
   toggleLyrics: () => set((state) => ({ showLyrics: !state.showLyrics, showQueue: false })),
 
       toggleQueue: () => set((state) => ({ showQueue: !state.showQueue, showLyrics: false })),
-
-      toggleDownloadPanel: () => set((state) => ({ showDownloadPanel: !state.showDownloadPanel })),
 
       setCrossfade: (enabled, duration) => {
         set((state) => ({
