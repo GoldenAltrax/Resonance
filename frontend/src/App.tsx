@@ -3,7 +3,6 @@ import { useAuthStore } from '@/stores/authStore';
 import { usePlaylistStore } from '@/stores/playlistStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useNetworkStore } from '@/stores/networkStore';
-import { useDownloadStore } from '@/stores/downloadStore';
 import { api } from '@/services/api';
 import { Page } from '@/types';
 
@@ -25,7 +24,6 @@ import PlayerBar from '@/components/player/PlayerBar';
 import LyricsPanel from '@/components/player/LyricsPanel';
 import QueuePanel from '@/components/player/QueuePanel';
 import EqualizerPanel from '@/components/player/EqualizerPanel';
-import DownloadManager from '@/components/DownloadManager';
 import { ToastContainer } from '@/components/ui/Toast';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import KeyboardShortcutsModal from '@/components/ui/KeyboardShortcutsModal';
@@ -51,9 +49,8 @@ const App = () => {
 
   const { isAuthenticated, token, user, checkAuth } = useAuthStore();
   const { playlists, fetchPlaylists } = usePlaylistStore();
-  const { currentTrack, showLyrics, showQueue, showDownloadPanel, loadPreferences } = usePlayerStore();
+  const { currentTrack, showLyrics, showQueue, loadPreferences } = usePlayerStore();
   const { startMonitoring } = useNetworkStore();
-  const { initCache } = useDownloadStore();
   const { isAndroid } = usePlatform();
 
   // Audio engine — must run on all platforms (Android uses MobilePlayerBar which doesn't call this)
@@ -62,11 +59,10 @@ const App = () => {
   // Enable keyboard shortcuts for player controls
   useKeyboardShortcuts({ onOpenHelp: () => setShowShortcutsModal(true) });
 
-  // Start network monitoring and cache init on mount
+  // Start network monitoring on mount
   useEffect(() => {
     startMonitoring();
-    initCache();
-  }, [startMonitoring, initCache]);
+  }, [startMonitoring]);
 
   // Handle splash screen
   useEffect(() => {
@@ -249,7 +245,6 @@ const App = () => {
         <LyricsPanel />
         <QueuePanel />
         <EqualizerPanel />
-        {showDownloadPanel && <DownloadManager />}
         <ToastContainer />
         <KeyboardShortcutsModal
           isOpen={showShortcutsModal}

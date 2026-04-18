@@ -16,7 +16,6 @@ import {
   Check,
   Radio,
   SlidersHorizontal,
-  CloudDownload,
 } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
 import { formatTime } from '@/hooks/useAudioPlayer';
@@ -45,7 +44,6 @@ export const PlayerBar = () => {
     repeat,
     showLyrics,
     showQueue,
-    showDownloadPanel,
     showEqualizer,
     radioMode,
     radioAutoStarted,
@@ -62,7 +60,6 @@ export const PlayerBar = () => {
     toggleRepeat,
     toggleLyrics,
     toggleQueue,
-    toggleDownloadPanel,
     toggleEqualizer,
     setSleepTimer,
     checkSleepTimer,
@@ -311,7 +308,6 @@ export const PlayerBar = () => {
         {/* Icon buttons group */}
         {[
           { onClick: toggleEqualizer, active: showEqualizer, icon: SlidersHorizontal, label: 'Equalizer' },
-          { onClick: toggleDownloadPanel, active: showDownloadPanel, icon: CloudDownload, label: 'Downloads' },
           { onClick: toggleQueue, active: showQueue, icon: ListMusic, label: 'Queue' },
           { onClick: toggleLyrics, active: showLyrics, icon: Mic2, label: 'Lyrics' },
         ].map(({ onClick, active, icon: Icon, label }) => (
