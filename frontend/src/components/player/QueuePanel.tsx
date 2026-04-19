@@ -24,6 +24,7 @@ interface SortableQueueItemProps {
   index: number;
   isCurrent: boolean;
   isPlaying: boolean;
+  isShufflePlayed?: boolean;
   onPlay: () => void;
   onRemove: () => void;
 }
@@ -33,6 +34,7 @@ const SortableQueueItem = ({
   index,
   isCurrent,
   isPlaying,
+  isShufflePlayed = false,
   onPlay,
   onRemove,
 }: SortableQueueItemProps) => {
@@ -65,7 +67,7 @@ const SortableQueueItem = ({
         isCurrent
           ? 'bg-zinc-800/70'
           : 'hover:bg-zinc-800/40'
-      } ${isDragging ? 'shadow-lg' : ''}`}
+      } ${isDragging ? 'shadow-lg' : ''} ${isShufflePlayed ? 'opacity-40' : ''}`}
     >
       {/* Drag Handle */}
       <button
@@ -136,6 +138,8 @@ const QueuePanel = () => {
     queueIndex,
     currentTrack,
     isPlaying,
+    shuffle,
+    shuffleHistory,
     showQueue,
     toggleQueue,
     play,
@@ -209,6 +213,11 @@ const QueuePanel = () => {
                 {queue.length} {queue.length === 1 ? 'track' : 'tracks'}
               </p>
             </div>
+            {shuffle && queue.length > 0 && (
+              <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 tabular-nums">
+                {shuffleHistory.length + 1} / {queue.length}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {queue.length > 0 && (
@@ -273,17 +282,21 @@ const QueuePanel = () => {
                         Up Next
                       </h4>
                       <div className="space-y-1">
-                        {upcomingTracks.map((track, i) => (
-                          <SortableQueueItem
-                            key={`upcoming-${queueIndex + 1 + i}`}
-                            track={track}
-                            index={queueIndex + 1 + i}
-                            isCurrent={false}
-                            isPlaying={false}
-                            onPlay={() => handlePlayTrack(queueIndex + 1 + i)}
-                            onRemove={() => removeFromQueue(queueIndex + 1 + i)}
-                          />
-                        ))}
+                        {upcomingTracks.map((track, i) => {
+                          const absIndex = queueIndex + 1 + i;
+                          return (
+                            <SortableQueueItem
+                              key={`upcoming-${absIndex}`}
+                              track={track}
+                              index={absIndex}
+                              isCurrent={false}
+                              isPlaying={false}
+                              isShufflePlayed={shuffle && shuffleHistory.includes(absIndex)}
+                              onPlay={() => handlePlayTrack(absIndex)}
+                              onRemove={() => removeFromQueue(absIndex)}
+                            />
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -302,6 +315,7 @@ const QueuePanel = () => {
                             index={i}
                             isCurrent={false}
                             isPlaying={false}
+                            isShufflePlayed={shuffle && shuffleHistory.includes(i)}
                             onPlay={() => handlePlayTrack(i)}
                             onRemove={() => removeFromQueue(i)}
                           />
