@@ -72,6 +72,10 @@ interface PlayerState {
   eqPreset: string; // e.g. 'Flat', 'Bass Boost', ...
   showEqualizer: boolean;
 
+  // Shuffle history — ordered list of queue indices played in the current shuffle cycle.
+  // Enables true no-repeat shuffle: pick only from unplayed indices until all are played.
+  shuffleHistory: number[];
+
   // Radio mode - auto-queue similar tracks
   radioMode: boolean;
   radioSourceTrackId: string | null;
@@ -146,6 +150,7 @@ export const usePlayerStore = create<PlayerState>()(
       eqGains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
       eqPreset: 'Flat',
       showEqualizer: false,
+      shuffleHistory: [],
       radioMode: false,
       radioSourceTrackId: null,
       radioAutoStarted: false,
@@ -186,6 +191,7 @@ export const usePlayerStore = create<PlayerState>()(
         queue: newQueue,
         queueIndex: newIndex,
         isPlaying: true,
+        shuffleHistory: [],
       });
     } else if (state.currentTrack) {
       // Resume current track
@@ -203,7 +209,7 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   next: () => {
-    const { queue, queueIndex, shuffle, repeat, currentTrack, progress, duration, radioMode } = get();
+    const { queue, queueIndex, shuffle, repeat, currentTrack, progress, duration, radioMode, shuffleHistory } = get();
     if (queue.length === 0) return;
 
     // C5: Skip logging — if <30% through the track, record the skip
@@ -215,15 +221,45 @@ export const usePlayerStore = create<PlayerState>()(
     let nextIndex: number;
 
     if (shuffle) {
-      // Random track (excluding current)
-      const availableIndices = queue
-        .map((_, i) => i)
-        .filter((i) => i !== queueIndex);
-      if (availableIndices.length === 0) {
-        nextIndex = queueIndex;
+      // Mark current track as played
+      const newHistory = shuffleHistory.includes(queueIndex)
+        ? shuffleHistory
+        : [...shuffleHistory, queueIndex];
+
+      // Tracks not yet played this cycle
+      const available = queue.map((_, i) => i).filter((i) => !newHistory.includes(i));
+
+      if (available.length === 0) {
+        // Full cycle complete
+        if (repeat === 'all') {
+          // Start a new cycle — reset history, pick any track except current
+          const fresh = queue.map((_, i) => i).filter((i) => i !== queueIndex);
+          nextIndex = fresh.length > 0
+            ? fresh[Math.floor(Math.random() * fresh.length)]!
+            : queueIndex;
+          set({ shuffleHistory: [] });
+        } else {
+          // Cycle done, no repeat — trigger radio or stop
+          set({ shuffleHistory: newHistory });
+          if (currentTrack && !radioMode) {
+            api.getSimilarTracks(currentTrack.id, { limit: 30 }).then(({ similarTracks }) => {
+              if (similarTracks.length > 0) {
+                get().startRadio(currentTrack, similarTracks);
+                if (_radioAutoStartedTimeout) clearTimeout(_radioAutoStartedTimeout);
+                set({ radioAutoStarted: true });
+                _radioAutoStartedTimeout = setTimeout(() => set({ radioAutoStarted: false }), 4000);
+              } else {
+                set({ isPlaying: false });
+              }
+            }).catch(() => { set({ isPlaying: false }); });
+          } else {
+            set({ isPlaying: false });
+          }
+          return;
+        }
       } else {
-        nextIndex =
-          availableIndices[Math.floor(Math.random() * availableIndices.length)] ?? queueIndex;
+        nextIndex = available[Math.floor(Math.random() * available.length)]!;
+        set({ shuffleHistory: newHistory });
       }
     } else {
       nextIndex = queueIndex + 1;
@@ -265,32 +301,35 @@ export const usePlayerStore = create<PlayerState>()(
   },
 
   previous: () => {
-    const { queue, queueIndex, progress } = get();
+    const { queue, queueIndex, progress, shuffle, shuffleHistory } = get();
     if (queue.length === 0) return;
 
     // If more than 3 seconds in, restart track
     if (progress > 3) {
       set({ progress: 0 });
       const { audioElement } = get();
-      if (audioElement) {
-        audioElement.currentTime = 0;
+      if (audioElement) audioElement.currentTime = 0;
+      return;
+    }
+
+    if (shuffle && shuffleHistory.length > 0) {
+      // Go back to the last track played in shuffle history
+      const newHistory = [...shuffleHistory];
+      const prevIndex = newHistory.pop()!;
+      const prevTrack = queue[prevIndex];
+      if (prevTrack) {
+        set({ currentTrack: prevTrack, queueIndex: prevIndex, progress: 0, shuffleHistory: newHistory });
       }
       return;
     }
 
-    // Otherwise go to previous track
+    // Non-shuffle: go to previous in queue order
     let prevIndex = queueIndex - 1;
-    if (prevIndex < 0) {
-      prevIndex = queue.length - 1;
-    }
+    if (prevIndex < 0) prevIndex = queue.length - 1;
 
     const prevTrack = queue[prevIndex];
     if (prevTrack) {
-      set({
-        currentTrack: prevTrack,
-        queueIndex: prevIndex,
-        progress: 0,
-      });
+      set({ currentTrack: prevTrack, queueIndex: prevIndex, progress: 0 });
     }
   },
 
@@ -326,7 +365,7 @@ export const usePlayerStore = create<PlayerState>()(
   setDuration: (duration) => set({ duration }),
 
   toggleShuffle: () => {
-        set((state) => ({ shuffle: !state.shuffle }));
+        set((state) => ({ shuffle: !state.shuffle, shuffleHistory: [] }));
         _syncPrefsToServer(_extractPrefs(get()));
       },
 
@@ -429,6 +468,7 @@ export const usePlayerStore = create<PlayerState>()(
           queueIndex: state.currentTrack ? 0 : -1,
           radioMode: false,
           radioSourceTrackId: null,
+          shuffleHistory: [],
         })),
 
       setSleepTimer: (minutes) => {
@@ -458,6 +498,7 @@ export const usePlayerStore = create<PlayerState>()(
           radioMode: true,
           radioSourceTrackId: track.id,
           shuffle: false, // Disable shuffle in radio mode
+          shuffleHistory: [],
         });
 
         // Log play to history
