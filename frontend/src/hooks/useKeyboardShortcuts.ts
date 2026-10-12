@@ -1,178 +1,102 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { usePlayerStore } from '@/stores/playerStore';
+import { usePlaybackStore } from '@/stores/playbackStore';
 import { toast } from '@/stores/toastStore';
 
 interface UseKeyboardShortcutsOptions {
   onOpenHelp?: () => void;
 }
 
+/**
+ * Global player shortcuts. The listener is registered once and reads current state at
+ * key-press time (previously it was torn down and re-added on every progress tick).
+ */
 export const useKeyboardShortcuts = (options?: UseKeyboardShortcutsOptions) => {
-  const {
-    isPlaying,
-    currentTrack,
-    volume,
-    isMuted,
-    progress,
-    duration,
-    shuffle,
-    repeat,
-    pause,
-    resume,
-    next,
-    previous,
-    seek,
-    setVolume,
-    toggleMute,
-    toggleShuffle,
-    toggleRepeat,
-    toggleLyrics,
-    toggleQueue,
-  } = usePlayerStore();
+  const onOpenHelpRef = useRef(options?.onOpenHelp);
+  onOpenHelpRef.current = options?.onOpenHelp;
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Ignore if user is typing in an input
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target as HTMLElement;
       if (
         target.tagName === 'INPUT' ||
         target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
         target.isContentEditable
       ) {
         return;
       }
 
-      const shortcuts: Record<string, () => void> = {
-        // Space - play/pause
-        ' ': () => {
-          event.preventDefault();
-          if (!currentTrack) return;
-          if (isPlaying) {
-            pause();
-            toast.info('Paused');
-          } else {
-            resume();
-            toast.info('Playing');
-          }
-        },
-
-        // Arrow keys for seeking
-        ArrowLeft: () => {
-          if (!currentTrack) return;
-          const newTime = Math.max(0, progress - 10);
-          seek(newTime);
-        },
-
-        ArrowRight: () => {
-          if (!currentTrack) return;
-          const newTime = Math.min(duration, progress + 10);
-          seek(newTime);
-        },
-
-        // Arrow keys for volume (with Shift)
-        ArrowUp: () => {
-          if (event.shiftKey) {
-            const newVolume = Math.min(1, volume + 0.1);
-            setVolume(newVolume);
-            toast.info(`Volume: ${Math.round(newVolume * 100)}%`);
-          }
-        },
-
-        ArrowDown: () => {
-          if (event.shiftKey) {
-            const newVolume = Math.max(0, volume - 0.1);
-            setVolume(newVolume);
-            toast.info(`Volume: ${Math.round(newVolume * 100)}%`);
-          }
-        },
-
-        // M - mute toggle
-        m: () => {
-          toggleMute();
-          toast.info(isMuted ? 'Unmuted' : 'Muted');
-        },
-
-        // L - lyrics toggle
-        l: () => {
-          toggleLyrics();
-        },
-
-        // Q - queue toggle
-        q: () => {
-          toggleQueue();
-        },
-
-        // N - next track
-        n: () => {
-          if (!currentTrack) return;
-          next();
-          toast.info('Next track');
-        },
-
-        // P - previous track
-        p: () => {
-          if (!currentTrack) return;
-          previous();
-          toast.info('Previous track');
-        },
-
-        // S - shuffle toggle
-        s: () => {
-          toggleShuffle();
-          toast.info(shuffle ? 'Shuffle off' : 'Shuffle on');
-        },
-
-        // R - repeat toggle
-        r: () => {
-          toggleRepeat();
-          const nextRepeat = repeat === 'none' ? 'all' : repeat === 'all' ? 'one' : 'none';
-          const messages = {
-            all: 'Repeat all',
-            one: 'Repeat one',
-            none: 'Repeat off',
-          };
-          toast.info(messages[nextRepeat]);
-        },
-
-        // ? - show help
-        '?': () => {
-          event.preventDefault();
-          options?.onOpenHelp?.();
-        },
-      };
-
-      // Handle shortcuts by key
-      // Keep arrow keys as-is (ArrowLeft, ArrowRight, etc.), lowercase letters
+      const player = usePlayerStore.getState();
+      const { progress, duration } = usePlaybackStore.getState();
       const key = event.key.startsWith('Arrow') ? event.key : event.key.toLowerCase();
-      const handler = shortcuts[key as keyof typeof shortcuts];
-      if (handler) {
-        handler();
+
+      switch (key) {
+        case ' ':
+          // Let focused buttons handle Space themselves
+          if (target.tagName === 'BUTTON' || target.getAttribute('role') === 'slider') return;
+          event.preventDefault();
+          if (player.currentTrack) player.togglePlay();
+          break;
+        case 'ArrowLeft':
+          if (player.currentTrack && !event.shiftKey) player.seek(Math.max(0, progress - 10));
+          break;
+        case 'ArrowRight':
+          if (player.currentTrack && !event.shiftKey) player.seek(Math.min(duration, progress + 10));
+          break;
+        case 'ArrowUp':
+          if (event.shiftKey) {
+            event.preventDefault();
+            const v = Math.min(1, Math.round((player.volume + 0.1) * 10) / 10);
+            player.setVolume(v);
+            toast.info(`Volume: ${Math.round(v * 100)}%`);
+          }
+          break;
+        case 'ArrowDown':
+          if (event.shiftKey) {
+            event.preventDefault();
+            const v = Math.max(0, Math.round((player.volume - 0.1) * 10) / 10);
+            player.setVolume(v);
+            toast.info(`Volume: ${Math.round(v * 100)}%`);
+          }
+          break;
+        case 'm':
+          player.toggleMute();
+          toast.info(player.isMuted ? 'Unmuted' : 'Muted');
+          break;
+        case 'l':
+          player.toggleLyrics();
+          break;
+        case 'q':
+          player.toggleQueue();
+          break;
+        case 'n':
+          if (player.currentTrack) player.next();
+          break;
+        case 'p':
+          if (player.currentTrack) player.previous();
+          break;
+        case 's':
+          player.toggleShuffle();
+          toast.info(player.shuffle ? 'Shuffle off' : 'Shuffle on');
+          break;
+        case 'r': {
+          player.toggleRepeat();
+          const labels = { none: 'Repeat off', all: 'Repeat all', one: 'Repeat one' } as const;
+          toast.info(labels[usePlayerStore.getState().repeat]);
+          break;
+        }
+        case '?':
+          event.preventDefault();
+          onOpenHelpRef.current?.();
+          break;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [
-    isPlaying,
-    currentTrack,
-    volume,
-    isMuted,
-    progress,
-    duration,
-    shuffle,
-    repeat,
-    pause,
-    resume,
-    next,
-    previous,
-    seek,
-    setVolume,
-    toggleMute,
-    toggleShuffle,
-    toggleRepeat,
-    toggleLyrics,
-    toggleQueue,
-    options,
-  ]);
+  }, []);
 };
 
 // Export keyboard shortcut info for help display

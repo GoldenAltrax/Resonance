@@ -1,10 +1,13 @@
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { X, Music2 } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
-import { fetchLyrics, LyricLine, getCurrentLyricIndex } from '@/services/lyrics';
+import { usePlaybackStore } from '@/stores/playbackStore';
+import { fetchTrackLyrics, LyricLine, getCurrentLyricIndex } from '@/services/lyrics';
 
 const LyricsPanel = () => {
-  const { currentTrack, progress, showLyrics, toggleLyrics, seek } = usePlayerStore();
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const showLyrics = usePlayerStore((s) => s.showLyrics);
+  const { toggleLyrics, seek } = usePlayerStore.getState();
   const [lyrics, setLyrics] = useState<LyricLine[] | null>(null);
   const [plainLyrics, setPlainLyrics] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -23,6 +26,9 @@ const LyricsPanel = () => {
       return;
     }
 
+    // Ignore results for a track the user has already skipped past
+    let cancelled = false;
+
     const loadLyrics = async () => {
       setIsLoading(true);
       setError(null);
@@ -30,7 +36,8 @@ const LyricsPanel = () => {
       setPlainLyrics(null);
 
       try {
-        const result = await fetchLyrics(currentTrack.title, currentTrack.artist);
+        const result = await fetchTrackLyrics(currentTrack);
+        if (cancelled) return;
         setLyrics(result.synced);
         setPlainLyrics(result.plain);
 
@@ -38,20 +45,18 @@ const LyricsPanel = () => {
           setError('No lyrics available for this track');
         }
       } catch {
-        setError('Failed to load lyrics');
+        if (!cancelled) setError('Failed to load lyrics');
       } finally {
-        setIsLoading(false);
+        if (!cancelled) setIsLoading(false);
       }
     };
 
     loadLyrics();
+    return () => { cancelled = true; };
   }, [currentTrack?.id]);
 
-  // Get current lyric index
-  const currentIndex = useMemo(() => {
-    if (!lyrics) return -1;
-    return getCurrentLyricIndex(lyrics, progress);
-  }, [lyrics, progress]);
+  // Subscribe to the derived line index, not raw progress: re-render only when the line changes
+  const currentIndex = usePlaybackStore((s) => (lyrics ? getCurrentLyricIndex(lyrics, s.progress) : -1));
 
   // Auto-scroll to current lyric
   useEffect(() => {
@@ -81,7 +86,7 @@ const LyricsPanel = () => {
   if (!showLyrics) return null;
 
   return (
-    <div className="fixed top-0 right-0 bottom-24 z-40 pointer-events-none">
+    <div className="fixed top-0 right-0 bottom-0 md:bottom-24 z-[60] md:z-40 pointer-events-none">
       {/* Right Sidebar Panel */}
       <div
         className={`w-[400px] max-w-[90vw] h-full bg-[#0a0a0a] border-l border-zinc-800/50 flex flex-col shadow-2xl transition-transform duration-300 ease-out pointer-events-auto ${
@@ -102,6 +107,7 @@ const LyricsPanel = () => {
           </div>
           <button
             onClick={handleClose}
+            aria-label="Close lyrics"
             className="p-2 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors flex-shrink-0"
           >
             <X className="w-5 h-5" />

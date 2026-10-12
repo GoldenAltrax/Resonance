@@ -29,6 +29,8 @@ interface PlaylistState {
   clearError: () => void;
 }
 
+let _requestedPlaylistId: string | null = null;
+
 export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   playlists: [],
   currentPlaylist: null,
@@ -52,11 +54,20 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   },
 
   fetchPlaylist: async (id: string) => {
-    set({ isLoading: true, error: null });
+    _requestedPlaylistId = id;
+    // Don't flash the previous playlist's tracks while the new one loads
+    set((state) => ({
+      isLoading: true,
+      error: null,
+      currentPlaylist: state.currentPlaylist?.id === id ? state.currentPlaylist : null,
+    }));
     try {
       const playlist = await api.getPlaylist(id);
+      // A newer navigation superseded this request
+      if (_requestedPlaylistId !== id) return;
       set({ currentPlaylist: playlist, isLoading: false });
     } catch (err) {
+      if (_requestedPlaylistId !== id) return;
       set({
         error: err instanceof Error ? err.message : 'Failed to fetch playlist',
         isLoading: false,

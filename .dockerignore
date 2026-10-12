@@ -6,7 +6,7 @@ frontend/dist
 backend/dist
 .git
 .github
-src-tauri
 *.tar
 *.tar.gz
 resonance-backup*
+backups

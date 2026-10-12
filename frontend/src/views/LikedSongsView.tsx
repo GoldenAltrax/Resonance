@@ -4,11 +4,14 @@ import { usePlayerStore } from '@/stores/playerStore';
 import { useFavoritesStore } from '@/stores/favoritesStore';
 import { usePlaylistStore } from '@/stores/playlistStore';
 import { Track, api } from '@/services/api';
+import { playlistCoverUrl } from '@/utils/cover';
 import { toast } from '@/stores/toastStore';
 
 const LikedSongsView = () => {
   const { favorites, isLoading, fetchFavorites, toggleFavorite } = useFavoritesStore();
-  const { play, currentTrack, isPlaying, pause } = usePlayerStore();
+  const { play, pause } = usePlayerStore.getState();
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
   const { playlists, fetchPlaylists, addTrackToPlaylist, createPlaylist } = usePlaylistStore();
 
   const [showImportModal, setShowImportModal] = useState(false);
@@ -340,11 +343,7 @@ const LikedSongsView = () => {
                       >
                         <div className="w-12 h-12 bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0">
                           <img
-                            src={
-                              playlist.coverImage
-                                ? api.getUploadUrl(playlist.coverImage)
-                                : `https://picsum.photos/seed/${playlist.id}/48/48`
-                            }
+                            src={playlistCoverUrl(playlist)}
                             alt={playlist.name}
                             className="w-full h-full object-cover"
                           />

@@ -1,5 +1,5 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { db, tracks, playlists } from '../db/index.js';
+import { db, tracks, playlists, trackPublicSelect } from '../db/index.js';
 import { or, sql } from 'drizzle-orm';
 import { authMiddleware } from '../middleware/auth.js';
 
@@ -22,7 +22,7 @@ export async function searchRoutes(app: FastifyInstance) {
     const searchType = type || 'all'; // 'all', 'tracks', 'playlists'
 
     const results: {
-      tracks: typeof tracks.$inferSelect[];
+      tracks: Omit<typeof tracks.$inferSelect, 'acoustidFingerprint'>[];
       playlists: typeof playlists.$inferSelect[];
     } = {
       tracks: [],
@@ -32,7 +32,7 @@ export async function searchRoutes(app: FastifyInstance) {
     // Search tracks - GLOBAL (all tracks in the library)
     if (searchType === 'all' || searchType === 'tracks') {
       const trackResults = await db
-        .select()
+        .select(trackPublicSelect)
         .from(tracks)
         .where(
           or(
@@ -75,7 +75,7 @@ export async function searchRoutes(app: FastifyInstance) {
     const offset = isNaN(parsedOffset) ? 0 : parsedOffset;
 
     const allTracks = await db
-      .select()
+      .select(trackPublicSelect)
       .from(tracks)
       .limit(limit)
       .offset(offset)

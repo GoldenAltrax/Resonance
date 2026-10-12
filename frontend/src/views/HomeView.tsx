@@ -1,41 +1,37 @@
-import { useEffect, useState } from 'react';
-import { PlayCircle, Clock, Shuffle, Search, Music, Play, History, AlertCircle } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { PlayCircle, Disc3, Shuffle, Search, Music, Play, History, AlertCircle } from 'lucide-react';
 import { usePlaylistStore } from '@/stores/playlistStore';
-import { usePlayerStore } from '@/stores/playerStore';
+import { usePlayerStore, shuffleArray } from '@/stores/playerStore';
 import { useAuthStore } from '@/stores/authStore';
-import { api, Track, HistoryEntry } from '@/services/api';
-import { Page } from '@/types';
+import { api, HistoryEntry } from '@/services/api';
 import { formatDuration, formatTimeAgo } from '@/utils/time';
+import { navigate } from '@/utils/router';
+import { playlistCoverUrl } from '@/utils/cover';
 
-interface HomeViewProps {
-  onNavigate: (page: Page) => void;
-  onPlaylistClick: (id: string) => void;
-}
-
-const HomeView = ({ onNavigate, onPlaylistClick }: HomeViewProps) => {
-  const { user } = useAuthStore();
-  const { playlists } = usePlaylistStore();
-  const { play } = usePlayerStore();
-  const [recentTracks, setRecentTracks] = useState<Track[]>([]);
-  const [isLoadingTracks, setIsLoadingTracks] = useState(true);
+const HomeView = () => {
+  const user = useAuthStore((s) => s.user);
+  const playlists = usePlaylistStore((s) => s.playlists);
+  const library = usePlaylistStore((s) => s.library);
+  const libraryLoading = usePlaylistStore((s) => s.libraryLoading);
+  const play = usePlayerStore((s) => s.play);
   const [recentlyPlayed, setRecentlyPlayed] = useState<HistoryEntry[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [historyError, setHistoryError] = useState<string | null>(null);
 
-  const isAdmin = user?.isAdmin ?? false;
-
+  // The library is shared with LibraryView via the store, so it's fetched once per session
   useEffect(() => {
-    if (!isAdmin) { setIsLoadingTracks(false); return; }
-    api.getTracks()
-      .then((tracks) => {
-        const sorted = tracks.sort((a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-        );
-        setRecentTracks(sorted.slice(0, 8));
-      })
-      .catch(() => {})
-      .finally(() => setIsLoadingTracks(false));
-  }, [isAdmin]);
+    const { library, fetchLibrary } = usePlaylistStore.getState();
+    if (library.length === 0) fetchLibrary();
+  }, []);
+
+  const recentTracks = useMemo(
+    () =>
+      [...library]
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 8),
+    [library]
+  );
+  const isLoadingTracks = libraryLoading && library.length === 0;
 
   useEffect(() => {
     api.getHistory()
@@ -51,9 +47,10 @@ const HomeView = ({ onNavigate, onPlaylistClick }: HomeViewProps) => {
     return 'Good Evening';
   };
 
+  // Shuffle the whole library, not just the 8 most recent tracks
   const handleShuffleAll = () => {
-    if (recentTracks.length === 0) return;
-    const shuffled = [...recentTracks].sort(() => Math.random() - 0.5);
+    if (library.length === 0) return;
+    const shuffled = shuffleArray(library);
     play(shuffled[0], shuffled);
   };
 
@@ -62,19 +59,12 @@ const HomeView = ({ onNavigate, onPlaylistClick }: HomeViewProps) => {
   };
 
   const overviewCards = [
-    { title: 'Playlists', icon: PlayCircle, action: () => onNavigate('playlists') },
-    { title: 'Recently Added', icon: Clock, action: () => onNavigate('search') },
+    { title: 'Playlists', icon: PlayCircle, action: () => navigate('playlists') },
+    { title: 'Albums', icon: Disc3, action: () => navigate('albums') },
     { title: 'Shuffle All', icon: Shuffle, action: handleShuffleAll },
   ];
 
-  const getPlaylistCover = (playlist: { id: string; coverImage: string | null }) => {
-    if (playlist.coverImage) {
-      return playlist.coverImage.startsWith('http')
-        ? playlist.coverImage
-        : api.getUploadUrl(playlist.coverImage);
-    }
-    return `https://picsum.photos/seed/${playlist.id}/500/500`;
-  };
+  const getPlaylistCover = playlistCoverUrl;
 
   return (
     <div className="space-y-10 max-w-5xl mx-auto">
@@ -86,7 +76,7 @@ const HomeView = ({ onNavigate, onPlaylistClick }: HomeViewProps) => {
         </div>
         <div
           className="relative group w-full md:w-72 cursor-pointer"
-          onClick={() => onNavigate('search')}
+          onClick={() => navigate('search')}
         >
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600 group-hover:text-zinc-400 transition-colors pointer-events-none" />
           <div className="w-full bg-zinc-900/60 border border-zinc-800/60 rounded-xl py-2.5 pl-11 pr-5 text-sm text-zinc-600 group-hover:border-zinc-700/60 group-hover:bg-zinc-900/80 transition-all">
@@ -112,7 +102,7 @@ const HomeView = ({ onNavigate, onPlaylistClick }: HomeViewProps) => {
             <svg
               width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
               strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-              className="text-zinc-700 opacity-0 group-hover:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all duration-300"
+              className="text-zinc-700 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 translate-x-1 group-hover:translate-x-0 transition-all duration-300"
             >
               <path d="M5 12h14M12 5l7 7-7 7" />
             </svg>
@@ -152,7 +142,7 @@ const HomeView = ({ onNavigate, onPlaylistClick }: HomeViewProps) => {
                         <Music className="w-8 h-8 text-zinc-700" />
                       </div>
                     )}
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity duration-200 flex items-center justify-center">
                       <div className="w-9 h-9 bg-white/15 backdrop-blur-md rounded-full flex items-center justify-center">
                         <Play className="w-4 h-4 text-white ml-0.5" />
                       </div>
@@ -177,7 +167,7 @@ const HomeView = ({ onNavigate, onPlaylistClick }: HomeViewProps) => {
       )}
 
       {/* Welcome for new users */}
-      {!isLoadingHistory && recentlyPlayed.length === 0 && !historyError && !isAdmin && (
+      {!isLoadingHistory && recentlyPlayed.length === 0 && !historyError && library.length === 0 && !libraryLoading && (
         <section className="bg-gradient-to-br from-zinc-900/60 to-zinc-800/20 rounded-3xl p-8 border border-zinc-800/40">
           <div className="flex flex-col md:flex-row items-center gap-8">
             <div className="w-20 h-20 bg-gradient-to-br from-zinc-800 to-zinc-900 rounded-2xl flex items-center justify-center flex-shrink-0 ring-1 ring-white/5 shadow-xl">
@@ -190,14 +180,14 @@ const HomeView = ({ onNavigate, onPlaylistClick }: HomeViewProps) => {
               </p>
               <div className="flex flex-wrap gap-3 justify-center md:justify-start">
                 <button
-                  onClick={() => onNavigate('search')}
+                  onClick={() => navigate('search')}
                   className="flex items-center gap-2 px-5 py-2.5 bg-white text-black rounded-full text-sm font-medium hover:bg-zinc-100 transition-colors"
                 >
                   <Search className="w-3.5 h-3.5" />
                   Search Music
                 </button>
                 <button
-                  onClick={() => onNavigate('playlists')}
+                  onClick={() => navigate('playlists')}
                   className="flex items-center gap-2 px-5 py-2.5 bg-zinc-800 text-zinc-300 rounded-full text-sm font-medium hover:bg-zinc-700 hover:text-white transition-colors"
                 >
                   <PlayCircle className="w-3.5 h-3.5" />
@@ -217,7 +207,7 @@ const HomeView = ({ onNavigate, onPlaylistClick }: HomeViewProps) => {
               <h3 className="text-base font-semibold text-white tracking-tight">Your Playlists</h3>
             </div>
             <button
-              onClick={() => onNavigate('playlists')}
+              onClick={() => navigate('playlists')}
               className="ml-4 text-[11px] text-zinc-600 hover:text-zinc-300 uppercase tracking-widest font-semibold transition-colors flex-shrink-0"
             >
               See all
@@ -228,7 +218,7 @@ const HomeView = ({ onNavigate, onPlaylistClick }: HomeViewProps) => {
               <div
                 key={playlist.id}
                 className="group cursor-pointer"
-                onClick={() => onPlaylistClick(playlist.id)}
+                onClick={() => navigate('playlist-detail', playlist.id)}
               >
                 <div className="aspect-square bg-zinc-900 rounded-xl overflow-hidden relative shadow-xl mb-3">
                   <img
@@ -238,7 +228,7 @@ const HomeView = ({ onNavigate, onPlaylistClick }: HomeViewProps) => {
                     decoding="async"
                     className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                   />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity duration-200 flex items-center justify-center">
                     <div className="w-12 h-12 bg-white/15 backdrop-blur-md rounded-full flex items-center justify-center transform translate-y-2 group-hover:translate-y-0 transition-transform duration-300">
                       <PlayCircle className="w-7 h-7 text-white fill-white" />
                     </div>
@@ -254,8 +244,8 @@ const HomeView = ({ onNavigate, onPlaylistClick }: HomeViewProps) => {
         </section>
       )}
 
-      {/* Recently Added (Admin) */}
-      {isAdmin && (
+      {/* Recently Added */}
+      {(isLoadingTracks || recentTracks.length > 0) && (
         <section>
           <div className="section-header mb-5">
             <h3 className="text-base font-semibold text-white tracking-tight">Recently Added</h3>

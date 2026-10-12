@@ -1,121 +1,123 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { usePlaylistStore } from '@/stores/playlistStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useNetworkStore } from '@/stores/networkStore';
 import { api } from '@/services/api';
-import { Page } from '@/types';
+import { useRoute, useMediaQuery } from '@/utils/router';
 
 import SplashView from '@/views/SplashView';
 import LandingView from '@/views/LandingView';
 import LoginView from '@/views/LoginView';
 import SignUpView from '@/views/SignUpView';
-import Sidebar from '@/components/Sidebar';
 import HomeView from '@/views/HomeView';
-import LibraryView from '@/views/LibraryView';
-import LikedSongsView from '@/views/LikedSongsView';
-import PlaylistsView from '@/views/PlaylistsView';
-import PlaylistDetailView from '@/views/PlaylistDetailView';
-import SettingsView from '@/views/SettingsView';
-import SearchView from '@/views/SearchView';
-import AdminView from '@/views/AdminView';
-import AlbumsView from '@/views/AlbumsView';
+import Sidebar from '@/components/Sidebar';
 import PlayerBar from '@/components/player/PlayerBar';
-import LyricsPanel from '@/components/player/LyricsPanel';
-import QueuePanel from '@/components/player/QueuePanel';
-import EqualizerPanel from '@/components/player/EqualizerPanel';
 import { ToastContainer } from '@/components/ui/Toast';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
-import KeyboardShortcutsModal from '@/components/ui/KeyboardShortcutsModal';
+import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import OfflineBanner from '@/components/OfflineBanner';
 import UpdateNotification from '@/components/UpdateNotification';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useAudioPlayer } from '@/hooks/useAudioPlayer';
-import { usePlatform } from '@/hooks/usePlatform';
-import BottomNav from '@/components/android/BottomNav';
-import MobilePlayerBar from '@/components/android/MobilePlayerBar';
-import NowPlayingScreen from '@/components/android/NowPlayingScreen';
+import BottomNav from '@/components/mobile/BottomNav';
+import MobilePlayerBar from '@/components/mobile/MobilePlayerBar';
 
+// Route-level code splitting: only Home ships in the initial bundle.
+const LibraryView = lazy(() => import('@/views/LibraryView'));
+const LikedSongsView = lazy(() => import('@/views/LikedSongsView'));
+const PlaylistsView = lazy(() => import('@/views/PlaylistsView'));
+const PlaylistDetailView = lazy(() => import('@/views/PlaylistDetailView'));
+const SettingsView = lazy(() => import('@/views/SettingsView'));
+const SearchView = lazy(() => import('@/views/SearchView'));
+const AdminView = lazy(() => import('@/views/AdminView'));
+const AlbumsView = lazy(() => import('@/views/AlbumsView'));
+// Panels are only needed once opened
+const LyricsPanel = lazy(() => import('@/components/player/LyricsPanel'));
+const QueuePanel = lazy(() => import('@/components/player/QueuePanel'));
+const EqualizerPanel = lazy(() => import('@/components/player/EqualizerPanel'));
+const NowPlayingScreen = lazy(() => import('@/components/mobile/NowPlayingScreen'));
+const KeyboardShortcutsModal = lazy(() => import('@/components/ui/KeyboardShortcutsModal'));
 
 type AuthScreen = 'landing' | 'login' | 'signup';
 
+const PageContent = () => {
+  const route = useRoute();
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
+  switch (route.page) {
+    case 'library':
+      return <LibraryView />;
+    case 'liked':
+      return <LikedSongsView />;
+    case 'playlists':
+      return <PlaylistsView />;
+    case 'playlist-detail':
+      return route.playlistId ? <PlaylistDetailView playlistId={route.playlistId} /> : <PlaylistsView />;
+    case 'search':
+      return <SearchView />;
+    case 'settings':
+      return <SettingsView />;
+    case 'albums':
+      return <AlbumsView />;
+    case 'admin':
+      return isAdmin ? <AdminView /> : <HomeView />;
+    default:
+      return <HomeView />;
+  }
+};
+
+const PageFallback = () => (
+  <div className="flex items-center justify-center py-24">
+    <LoadingSpinner />
+  </div>
+);
+
 const App = () => {
-  const [showSplash, setShowSplash] = useState(true);
   const [authScreen, setAuthScreen] = useState<AuthScreen>('landing');
-  const [activePage, setActivePage] = useState<Page>('home');
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [showNowPlaying, setShowNowPlaying] = useState(false);
+  // Only show the splash while a stored session is being verified (no fixed delay)
+  const [isBooting, setIsBooting] = useState(() => !!useAuthStore.getState().token);
 
-  const { isAuthenticated, token, user, checkAuth } = useAuthStore();
-  const { playlists, fetchPlaylists } = usePlaylistStore();
-  const { currentTrack, showLyrics, showQueue, loadPreferences } = usePlayerStore();
-  const { startMonitoring } = useNetworkStore();
-  const { isAndroid } = usePlatform();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const userId = useAuthStore((s) => s.user?.id);
+  const hasTrack = usePlayerStore((s) => s.currentTrack !== null);
+  const sidePanelOpen = usePlayerStore((s) => s.showLyrics || s.showQueue);
+  const showEqualizer = usePlayerStore((s) => s.showEqualizer);
+  const isDesktop = useMediaQuery('(min-width: 768px)');
+  const route = useRoute();
+  const mainRef = useRef<HTMLElement>(null);
 
-  // Audio engine — must run on all platforms (Android uses MobilePlayerBar which doesn't call this)
+  // Audio engine controller — mounted once for the app's lifetime
   useAudioPlayer();
-
-  // Enable keyboard shortcuts for player controls
   useKeyboardShortcuts({ onOpenHelp: () => setShowShortcutsModal(true) });
 
-  // Start network monitoring on mount
-  useEffect(() => {
-    startMonitoring();
-  }, [startMonitoring]);
+  useEffect(() => useNetworkStore.getState().startMonitoring(), []);
 
-  // Handle splash screen
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowSplash(false);
-    }, 4500);
-    return () => clearTimeout(timer);
+    if (!useAuthStore.getState().token) return;
+    useAuthStore.getState().checkAuth().finally(() => setIsBooting(false));
   }, []);
 
-  // Check auth on mount and set API token
+  // Per-user data: playlists and synced player preferences
   useEffect(() => {
-    if (token) {
-      api.setToken(token);
-      checkAuth();
-    }
-  }, [token, checkAuth]);
+    if (!isAuthenticated || !userId) return;
+    usePlaylistStore.getState().fetchPlaylists();
+    api.getPreferences(userId)
+      .then((prefs) => { if (prefs) usePlayerStore.getState().loadPreferences(prefs); })
+      .catch(() => {});
+  }, [isAuthenticated, userId]);
 
-  // Fetch playlists when authenticated
+  // New page → start at the top (but keep scroll position on back/forward within the same page)
   useEffect(() => {
-    if (isAuthenticated) {
-      fetchPlaylists();
-    }
-  }, [isAuthenticated, fetchPlaylists]);
+    mainRef.current?.scrollTo({ top: 0 });
+  }, [route]);
 
-  // Load synced player preferences from server on login
-  useEffect(() => {
-    if (isAuthenticated && user?.id) {
-      api.getPreferences(user.id).then((prefs) => {
-        if (prefs) loadPreferences(prefs);
-      }).catch(() => {});
-    }
-  }, [isAuthenticated, user?.id, loadPreferences]);
-
-  const navigateToPlaylist = (id: string) => {
-    setSelectedPlaylistId(id);
-    setActivePage('playlist-detail');
-  };
-
-  // Show splash screen
-  if (showSplash) {
+  if (isBooting) {
     return <SplashView />;
   }
 
-  // Show auth screens if not authenticated
   if (!isAuthenticated) {
-    if (authScreen === 'landing') {
-      return (
-        <LandingView
-          onLogin={() => setAuthScreen('login')}
-          onSignUp={() => setAuthScreen('signup')}
-        />
-      );
-    }
     if (authScreen === 'signup') {
       return (
         <SignUpView
@@ -124,132 +126,76 @@ const App = () => {
         />
       );
     }
+    if (authScreen === 'login') {
+      return (
+        <LoginView
+          onSwitchToSignup={() => setAuthScreen('signup')}
+          onBack={() => setAuthScreen('landing')}
+        />
+      );
+    }
     return (
-      <LoginView
-        onSwitchToSignup={() => setAuthScreen('signup')}
-        onBack={() => setAuthScreen('landing')}
+      <LandingView
+        onLogin={() => setAuthScreen('login')}
+        onSignUp={() => setAuthScreen('signup')}
       />
     );
   }
 
-  // Render main content based on active page
-  const renderContent = () => {
-    switch (activePage) {
-      case 'home':
-        return (
-          <HomeView
-            onNavigate={setActivePage}
-            onPlaylistClick={navigateToPlaylist}
-          />
-        );
-      case 'library':
-        return <LibraryView />;
-      case 'liked':
-        return <LikedSongsView />;
-      case 'playlists':
-        return (
-          <PlaylistsView
-            onPlaylistClick={navigateToPlaylist}
-          />
-        );
-      case 'playlist-detail':
-        return selectedPlaylistId ? (
-          <PlaylistDetailView playlistId={selectedPlaylistId} />
-        ) : (
-          <HomeView
-            onNavigate={setActivePage}
-            onPlaylistClick={navigateToPlaylist}
-          />
-        );
-      case 'search':
-        return <SearchView />;
-      case 'settings':
-        return <SettingsView />;
-      case 'albums':
-        return <AlbumsView />;
-      case 'admin':
-        return <AdminView />;
-      default:
-        return (
-          <HomeView
-            onNavigate={setActivePage}
-            onPlaylistClick={navigateToPlaylist}
-          />
-        );
-    }
-  };
-
-  // Convert API playlists to frontend format for Sidebar
-  const sidebarPlaylists = playlists.map((p) => ({
-    id: p.id,
-    name: p.name,
-    description: p.description || '',
-    image: p.coverImage || `https://picsum.photos/seed/${p.id}/400/400`,
-    songs: [],
-  }));
-
-  if (isAndroid) {
-    return (
-      <ErrorBoundary>
-        <div className="flex flex-col h-screen w-full bg-[#0a0a0a] text-zinc-300 select-none overflow-hidden">
-          <OfflineBanner />
-          <main
-            className="flex-1 overflow-y-auto relative"
-            style={{
-              paddingBottom: currentTrack
-                ? 'calc(72px + 56px + env(safe-area-inset-bottom))'
-                : 'calc(56px + env(safe-area-inset-bottom))',
-            }}
-          >
-            <div className="absolute inset-0 bg-gradient-to-b from-[#1a1a1a]/20 to-[#0a0a0a] pointer-events-none" />
-            <div className="relative z-10 p-4 pb-4">
-              <ErrorBoundary>
-                {renderContent()}
-              </ErrorBoundary>
-            </div>
-          </main>
-          <MobilePlayerBar onOpenNowPlaying={() => setShowNowPlaying(true)} />
-          <BottomNav activePage={activePage} onNavigate={setActivePage} />
-          {showNowPlaying && (
-            <NowPlayingScreen onClose={() => setShowNowPlaying(false)} />
-          )}
-          <ToastContainer />
-        </div>
-      </ErrorBoundary>
-    );
-  }
+  const mobileBottomPadding = hasTrack
+    ? 'calc(72px + 56px + env(safe-area-inset-bottom))'
+    : 'calc(56px + env(safe-area-inset-bottom))';
 
   return (
     <ErrorBoundary>
-      <div className="flex h-screen w-full bg-[#0a0a0a] text-zinc-300 select-none overflow-hidden">
+      <div className="flex h-[100dvh] w-full bg-[#0a0a0a] text-zinc-300 select-none overflow-hidden">
         <OfflineBanner />
         <UpdateNotification />
-        <Sidebar
-          activePage={activePage}
-          setActivePage={setActivePage}
-          playlists={sidebarPlaylists}
-          onPlaylistClick={navigateToPlaylist}
-        />
+        {isDesktop && <Sidebar />}
         <main
-          className={`flex-1 overflow-y-auto relative h-full transition-[margin] duration-300 ease-out ${currentTrack ? 'pb-24' : ''}`}
-          style={{ marginRight: showLyrics || showQueue ? '400px' : '0' }}
+          ref={mainRef}
+          className="flex-1 overflow-y-auto relative h-full transition-[margin] duration-300 ease-out"
+          style={
+            isDesktop
+              ? { marginRight: sidePanelOpen ? '400px' : '0', paddingBottom: hasTrack ? '96px' : 0 }
+              : { paddingBottom: mobileBottomPadding }
+          }
         >
           <div className="absolute inset-0 bg-gradient-to-b from-[#1a1a1a]/20 to-[#0a0a0a] pointer-events-none" />
-          <div className="relative z-10 p-6 md:p-10 pb-32">
-            <ErrorBoundary>
-              {renderContent()}
+          <div className={`relative z-10 ${isDesktop ? 'p-6 md:p-10 pb-10' : 'p-4'}`}>
+            <ErrorBoundary key={route.page}>
+              <Suspense fallback={<PageFallback />}>
+                <PageContent />
+              </Suspense>
             </ErrorBoundary>
           </div>
         </main>
-        <PlayerBar />
-        <LyricsPanel />
-        <QueuePanel />
-        <EqualizerPanel />
+
+        {isDesktop ? (
+          <PlayerBar />
+        ) : (
+          <>
+            <MobilePlayerBar onOpenNowPlaying={() => setShowNowPlaying(true)} />
+            <BottomNav />
+          </>
+        )}
+
+        <Suspense fallback={null}>
+          {sidePanelOpen && (
+            <>
+              <LyricsPanel />
+              <QueuePanel />
+            </>
+          )}
+          {showEqualizer && <EqualizerPanel />}
+          {!isDesktop && showNowPlaying && (
+            <NowPlayingScreen onClose={() => setShowNowPlaying(false)} />
+          )}
+          {showShortcutsModal && (
+            <KeyboardShortcutsModal isOpen onClose={() => setShowShortcutsModal(false)} />
+          )}
+        </Suspense>
         <ToastContainer />
-        <KeyboardShortcutsModal
-          isOpen={showShortcutsModal}
-          onClose={() => setShowShortcutsModal(false)}
-        />
       </div>
     </ErrorBoundary>
   );

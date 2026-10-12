@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   Play,
   Pause,
@@ -16,10 +17,11 @@ import {
   Check,
   Radio,
   SlidersHorizontal,
+  Loader2,
 } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
-import { formatTime } from '@/hooks/useAudioPlayer';
-import { ProgressScrubber } from './ProgressScrubber';
+import { ProgressScrubber, ElapsedTime, TotalTime } from './ProgressScrubber';
+import { usePlaybackStore } from '@/stores/playbackStore';
 import { useFavoritesStore } from '@/stores/favoritesStore';
 import { api } from '@/services/api';
 import { AlbumArt } from '@/components/ui/AlbumArt';
@@ -34,13 +36,12 @@ const SLEEP_TIMER_OPTIONS = [
 ];
 
 export const PlayerBar = () => {
+  // Fine-grained selectors: this bar must not re-render on every progress tick
   const {
     currentTrack,
     isPlaying,
     volume,
     isMuted,
-    progress,
-    duration,
     shuffle,
     repeat,
     showLyrics,
@@ -50,39 +51,42 @@ export const PlayerBar = () => {
     radioAutoStarted,
     sleepTimerEnd,
     sleepTimerMinutes,
-    play,
-    pause,
-    next,
-    previous,
-    seek,
-    setVolume,
-    toggleMute,
-    toggleShuffle,
-    toggleRepeat,
-    toggleLyrics,
-    toggleQueue,
-    toggleEqualizer,
-    setSleepTimer,
-    checkSleepTimer,
-    stopRadio,
-    startRadio,
-  } = usePlayerStore();
+  } = usePlayerStore(
+    useShallow((s) => ({
+      currentTrack: s.currentTrack,
+      isPlaying: s.isPlaying,
+      volume: s.volume,
+      isMuted: s.isMuted,
+      shuffle: s.shuffle,
+      repeat: s.repeat,
+      showLyrics: s.showLyrics,
+      showQueue: s.showQueue,
+      showEqualizer: s.showEqualizer,
+      radioMode: s.radioMode,
+      radioAutoStarted: s.radioAutoStarted,
+      sleepTimerEnd: s.sleepTimerEnd,
+      sleepTimerMinutes: s.sleepTimerMinutes,
+    }))
+  );
+  const {
+    togglePlay, next, previous, setVolume, toggleMute, toggleShuffle, toggleRepeat,
+    toggleLyrics, toggleQueue, toggleEqualizer, setSleepTimer, stopRadio, startRadio,
+  } = usePlayerStore.getState();
+  const isBuffering = usePlaybackStore((s) => s.isBuffering);
 
-  const { isFavorited, toggleFavorite } = useFavoritesStore();
+  const isCurrentFavorited = useFavoritesStore((s) => (currentTrack ? s.favoriteIds.has(currentTrack.id) : false));
+  const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
   const [showSleepMenu, setShowSleepMenu] = useState(false);
   const [radioLoading, setRadioLoading] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState<string | null>(null);
 
-  const checkSleepTimerRef = React.useRef(checkSleepTimer);
-  checkSleepTimerRef.current = checkSleepTimer;
-
+  // Countdown label only — the timer itself lives in the store
   useEffect(() => {
     if (!sleepTimerEnd) {
       setTimeRemaining(null);
       return;
     }
-    const interval = setInterval(() => {
-      checkSleepTimerRef.current();
+    const tick = () => {
       const remaining = sleepTimerEnd - Date.now();
       if (remaining <= 0) {
         setTimeRemaining(null);
@@ -91,13 +95,14 @@ export const PlayerBar = () => {
         const secs = Math.floor((remaining % 60000) / 1000);
         setTimeRemaining(`${mins}:${secs.toString().padStart(2, '0')}`);
       }
-    }, 1000);
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
   }, [sleepTimerEnd]);
 
   if (!currentTrack) return null;
 
-  const isCurrentFavorited = isFavorited(currentTrack.id);
   const coverUrl = currentTrack.coverArt
     ? api.getTrackCoverUrl(currentTrack.coverArt)
     : null;
@@ -183,7 +188,7 @@ export const PlayerBar = () => {
           </button>
 
           <button
-            onClick={previous}
+            onClick={() => previous()}
             title="Previous"
             aria-label="Previous track"
             className="text-zinc-400 hover:text-white transition-colors duration-150 hover:scale-105 active:scale-95"
@@ -192,12 +197,14 @@ export const PlayerBar = () => {
           </button>
 
           <button
-            onClick={() => (isPlaying ? pause() : play())}
+            onClick={togglePlay}
             title={isPlaying ? 'Pause' : 'Play'}
             aria-label={isPlaying ? 'Pause' : 'Play'}
             className="w-9 h-9 bg-white rounded-full flex items-center justify-center transition-all duration-150 hover:scale-105 active:scale-95 shadow-glow-white hover:shadow-[0_0_24px_rgba(255,255,255,0.2)]"
           >
-            {isPlaying ? (
+            {isPlaying && isBuffering ? (
+              <Loader2 className="w-4 h-4 text-black animate-spin" />
+            ) : isPlaying ? (
               <Pause className="w-4 h-4 text-black" />
             ) : (
               <Play className="w-4 h-4 text-black ml-0.5" />
@@ -205,7 +212,7 @@ export const PlayerBar = () => {
           </button>
 
           <button
-            onClick={next}
+            onClick={() => next()}
             title="Next"
             aria-label="Next track"
             className="text-zinc-400 hover:text-white transition-colors duration-150 hover:scale-105 active:scale-95"
@@ -227,15 +234,11 @@ export const PlayerBar = () => {
 
         {/* Progress Bar */}
         <div className="w-full flex items-center gap-2.5">
-          <span className="text-[11px] text-zinc-600 w-9 text-right tabular-nums">{formatTime(progress)}</span>
+          <ElapsedTime className="text-[11px] text-zinc-600 w-10 text-right tabular-nums" />
           <div className="flex-1">
-            <ProgressScrubber
-              progress={progress}
-              duration={duration}
-              onSeek={seek}
-            />
+            <ProgressScrubber />
           </div>
-          <span className="text-[11px] text-zinc-600 w-9 tabular-nums">{formatTime(duration)}</span>
+          <TotalTime className="text-[11px] text-zinc-600 w-10 tabular-nums" />
         </div>
       </div>
 

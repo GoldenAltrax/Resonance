@@ -1,8 +1,8 @@
 {
   "name": "resonance",
   "private": true,
-  "version": "4.4.1",
-  "description": "Resonance - Simply Music. A premium PWA music player.",
+  "version": "5.0.0",
+  "description": "Resonance - Simply Music. A self-hosted music player (installable PWA).",
   "author": "Ibrahim Khaleelulla",
   "type": "module",
   "workspaces": [
@@ -20,9 +20,6 @@
     "db:migrate": "npm run db:migrate -w backend",
     "db:studio": "npm run db:studio -w backend",
     "import:songs": "npm run import:songs -w backend --",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
-    "tauri:android:init": "tauri android init",
-    "tauri:android:build": "tauri android build"
+    "test": "npm test -w backend && npm test -w frontend"
   }
 }

@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
-import { db } from '../db/index.js';
+import { db, trackPublicColumns } from '../db/index.js';
 import { playHistory, tracks } from '../db/schema.js';
 import { eq, desc } from 'drizzle-orm';
 import { authMiddleware } from '../middleware/auth.js';
@@ -44,6 +44,7 @@ export async function historyRoutes(app: FastifyInstance) {
 
     // Get tracks data
     const tracksData = await db.query.tracks.findMany({
+      columns: trackPublicColumns,
       where: (tracks, { inArray }) => inArray(tracks.id, trackIds),
     });
 

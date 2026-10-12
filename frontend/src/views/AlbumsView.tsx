@@ -7,7 +7,8 @@ export default function AlbumsView() {
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedAlbum, setSelectedAlbum] = useState<AlbumSummary | null>(null);
-  const { play } = usePlayerStore();
+  // Actions only: stable references, no subscription
+  const { play } = usePlayerStore.getState();
 
   useEffect(() => {
     api

@@ -65,8 +65,9 @@ Oracle_Cloud/
 *.pem
 *.keystore
 
-# Tauri build outputs
-src-tauri/target/
-src-tauri/gen/android/app/build/
-src-tauri/gen/android/.gradle/
-src-tauri/gen/android/local.properties
+
+# graphify
+graphify-out/
+
+# Server backups (scripts/backup.sh)
+backups/

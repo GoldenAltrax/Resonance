@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { getTableColumns } from 'drizzle-orm';
 
 // Users table
 export const users = sqliteTable('users', {
@@ -111,3 +112,10 @@ export type PlayHistory = typeof playHistory.$inferSelect;
 export type NewPlayHistory = typeof playHistory.$inferInsert;
 export type TrackSkip = typeof trackSkips.$inferSelect;
 export type NewTrackSkip = typeof trackSkips.$inferInsert;
+
+// Columns safe to send to clients. The Chromaprint fingerprint is several KB per track and
+// only used server-side for duplicate detection, so it is excluded from every API response.
+export const trackPublicColumns = { acoustidFingerprint: false } as const;
+
+const { acoustidFingerprint: _fingerprint, ...publicTrackFields } = getTableColumns(tracks);
+export const trackPublicSelect = publicTrackFields;

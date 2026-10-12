@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, ChangeEvent, useMemo, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Upload, Play, Pause, Trash2, Search, Music2, X, CheckSquare, Square, Heart, ArrowUpDown, ChevronDown, ShieldX } from 'lucide-react';
+import { Upload, Play, Pause, Trash2, Search, Music2, X, CheckSquare, Square, Heart, ArrowUpDown, ChevronDown, Disc3 } from 'lucide-react';
 import { usePlaylistStore } from '@/stores/playlistStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -11,6 +11,7 @@ import { DuplicateError } from '@/types/index';
 import ImportProgressModal from '@/components/ui/ImportProgressModal';
 import DropZone from '@/components/ui/DropZone';
 import { useFavoritesStore } from '@/stores/favoritesStore';
+import { navigate } from '@/utils/router';
 
 // File size limits
 const MAX_TRACK_SIZE = 50 * 1024 * 1024; // 50MB
@@ -40,22 +41,8 @@ const getStoredSort = (): SortOption => {
 const VIRTUALIZATION_THRESHOLD = 50;
 
 const LibraryView = () => {
-  const { user } = useAuthStore();
-  const isAdmin = user?.isAdmin ?? false;
-
-  // Admin-only access guard
-  if (!isAdmin) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] text-zinc-500">
-        <ShieldX className="w-20 h-20 mb-6 opacity-50" />
-        <h2 className="text-2xl font-medium text-zinc-300 mb-2">Access Restricted</h2>
-        <p className="text-zinc-500 text-center max-w-md">
-          The Library is only accessible to administrators.<br />
-          Use Search to discover and play music.
-        </p>
-      </div>
-    );
-  }
+  // Everyone can browse and play; importing, selecting and deleting stay admin-only
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cancelRef = useRef(false);
@@ -72,7 +59,9 @@ const LibraryView = () => {
   const [showSortDropdown, setShowSortDropdown] = useState(false);
 
   const { library, libraryLoading, fetchLibrary, uploadTrack, deleteTrack } = usePlaylistStore();
-  const { play, currentTrack, isPlaying, pause } = usePlayerStore();
+  const { play, pause } = usePlayerStore.getState();
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
   const { toggleFavorite, isFavorited, fetchFavoriteIds } = useFavoritesStore();
 
   useEffect(() => {
@@ -304,17 +293,24 @@ const LibraryView = () => {
       onFilesDropped={handleFilesDropped}
       accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a,.aac"
       className="max-w-6xl"
-      disabled={isUploading}
+      disabled={isUploading || !isAdmin}
     >
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-white mb-1">Your Library</h1>
+          <h1 className="text-3xl font-bold text-white mb-1">Library</h1>
           <p className="text-zinc-500 text-sm">
             {library.length} {library.length === 1 ? 'track' : 'tracks'}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={() => navigate('albums')}
+            className="flex items-center gap-2 px-4 py-2.5 bg-zinc-900/50 border border-zinc-800 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800/50 transition-colors"
+          >
+            <Disc3 className="w-4 h-4" />
+            <span className="text-sm">Albums</span>
+          </button>
           {/* Sort Dropdown */}
           <div className="relative">
             <button
@@ -361,14 +357,14 @@ const LibraryView = () => {
               Delete ({selectedTracks.size})
             </button>
           )}
-          <button
+          {isAdmin && <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
             className="flex items-center gap-2 px-6 py-2.5 bg-white text-black rounded-xl font-medium hover:bg-zinc-200 transition-colors disabled:opacity-50"
           >
             <Upload className="w-4 h-4" />
             Import Tracks
-          </button>
+          </button>}
           <input
             type="file"
             ref={fileInputRef}
@@ -416,14 +412,14 @@ const LibraryView = () => {
         <div className="flex flex-col items-center justify-center py-20 text-zinc-500">
           <Music2 className="w-16 h-16 mb-4 opacity-50" />
           <h3 className="text-lg font-medium text-zinc-400 mb-2">Your library is empty</h3>
-          <p className="text-sm mb-6">Import some tracks to get started</p>
-          <button
+          <p className="text-sm mb-6">{isAdmin ? 'Import some tracks to get started' : 'An admin hasn\'t added any music yet'}</p>
+          {isAdmin && <button
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-2 px-6 py-3 bg-zinc-800 text-white rounded-xl hover:bg-zinc-700 transition-colors"
           >
             <Upload className="w-4 h-4" />
             Import Tracks
-          </button>
+          </button>}
         </div>
       )}
 
@@ -431,8 +427,8 @@ const LibraryView = () => {
       {!libraryLoading && library.length > 0 && (
         <div className="bg-zinc-900/30 rounded-2xl border border-zinc-800/50 overflow-hidden">
           {/* Table Header */}
-          <div className="grid grid-cols-[auto_1fr_1fr_100px_120px_auto_auto] gap-4 px-4 py-3 border-b border-zinc-800/50 text-xs uppercase tracking-wider text-zinc-500">
-            <button
+          <div className="grid grid-cols-[auto_1fr_auto_auto] md:grid-cols-[auto_1fr_1fr_100px_120px_auto_auto] gap-4 px-4 py-3 border-b border-zinc-800/50 text-xs uppercase tracking-wider text-zinc-500">
+            {isAdmin ? (<button
               onClick={toggleSelectAll}
               className="w-8 flex items-center justify-center hover:text-white transition-colors"
             >
@@ -441,11 +437,11 @@ const LibraryView = () => {
               ) : (
                 <Square className="w-4 h-4" />
               )}
-            </button>
+            </button>) : <span className="w-8" />}
             <span>Title</span>
-            <span>Artist</span>
-            <span className="text-right">Duration</span>
-            <span>Added</span>
+            <span className="hidden md:block">Artist</span>
+            <span className="hidden md:block text-right">Duration</span>
+            <span className="hidden md:block">Added</span>
             <span className="w-8"></span>
             <span className="w-10"></span>
           </div>
@@ -480,11 +476,12 @@ const LibraryView = () => {
                       }}
                     >
                       <div
-                        className={`grid grid-cols-[auto_1fr_1fr_100px_120px_auto_auto] gap-4 px-4 h-14 items-center hover:bg-zinc-800/30 transition-colors group ${
+                        className={`grid grid-cols-[auto_1fr_auto_auto] md:grid-cols-[auto_1fr_1fr_100px_120px_auto_auto] gap-4 px-4 h-14 items-center hover:bg-zinc-800/30 transition-colors group ${
                           isTrackPlaying(track) ? 'bg-zinc-800/50' : ''
                         }`}
                       >
-                        {/* Checkbox */}
+                        {/* Checkbox (admin) */}
+                        {isAdmin ? (
                         <button
                           onClick={() => toggleTrackSelection(track.id)}
                           className="w-8 flex items-center justify-center text-zinc-500 hover:text-white transition-colors"
@@ -495,6 +492,7 @@ const LibraryView = () => {
                             <Square className="w-4 h-4" />
                           )}
                         </button>
+                        ) : <span className="w-8" />}
 
                         {/* Title with Play Button */}
                         <div className="flex items-center gap-3 min-w-0">
@@ -514,15 +512,15 @@ const LibraryView = () => {
                         </div>
 
                         {/* Artist */}
-                        <span className="text-zinc-500 truncate">{track.artist || 'Unknown Artist'}</span>
+                        <span className="hidden md:block text-zinc-500 truncate">{track.artist || 'Unknown Artist'}</span>
 
                         {/* Duration */}
-                        <span className="text-zinc-500 text-right tabular-nums">
+                        <span className="hidden md:block text-zinc-500 text-right tabular-nums">
                           {formatDuration(track.duration)}
                         </span>
 
                         {/* Date Added */}
-                        <span className="text-zinc-600 text-sm">{formatDate(track.createdAt)}</span>
+                        <span className="hidden md:block text-zinc-600 text-sm">{formatDate(track.createdAt)}</span>
 
                         {/* Favorite Button */}
                         <button
@@ -530,21 +528,23 @@ const LibraryView = () => {
                           className={`w-8 flex items-center justify-center transition-all duration-200 ${
                             isFavorited(track.id)
                               ? 'text-pink-500 hover:text-pink-400'
-                              : 'text-zinc-600 hover:text-pink-500 opacity-0 group-hover:opacity-100'
+                              : 'text-zinc-600 hover:text-pink-500 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100'
                           }`}
                           title={isFavorited(track.id) ? 'Remove from Liked Songs' : 'Add to Liked Songs'}
                         >
                           <Heart className={`w-4 h-4 ${isFavorited(track.id) ? 'fill-current' : ''}`} />
                         </button>
 
-                        {/* Delete Button */}
+                        {/* Delete Button (admin) */}
+                        {isAdmin ? (
                         <button
                           onClick={() => handleDeleteClick(track)}
-                          className="w-10 flex items-center justify-center text-zinc-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                          className="w-10 flex items-center justify-center text-zinc-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
                           title="Delete track"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
+                        ) : <span className="w-10" />}
                       </div>
                     </div>
                   );
@@ -557,11 +557,12 @@ const LibraryView = () => {
               {filteredTracks.map((track) => (
                 <div
                   key={track.id}
-                  className={`grid grid-cols-[auto_1fr_1fr_100px_120px_auto_auto] gap-4 px-4 py-3 items-center hover:bg-zinc-800/30 transition-colors group ${
+                  className={`grid grid-cols-[auto_1fr_auto_auto] md:grid-cols-[auto_1fr_1fr_100px_120px_auto_auto] gap-4 px-4 py-3 items-center hover:bg-zinc-800/30 transition-colors group ${
                     isTrackPlaying(track) ? 'bg-zinc-800/50' : ''
                   }`}
                 >
-                  {/* Checkbox */}
+                  {/* Checkbox (admin) */}
+                  {isAdmin ? (
                   <button
                     onClick={() => toggleTrackSelection(track.id)}
                     className="w-8 flex items-center justify-center text-zinc-500 hover:text-white transition-colors"
@@ -572,6 +573,7 @@ const LibraryView = () => {
                       <Square className="w-4 h-4" />
                     )}
                   </button>
+                  ) : <span className="w-8" />}
 
                   {/* Title with Play Button */}
                   <div className="flex items-center gap-3 min-w-0">
@@ -591,15 +593,15 @@ const LibraryView = () => {
                   </div>
 
                   {/* Artist */}
-                  <span className="text-zinc-500 truncate">{track.artist || 'Unknown Artist'}</span>
+                  <span className="hidden md:block text-zinc-500 truncate">{track.artist || 'Unknown Artist'}</span>
 
                   {/* Duration */}
-                  <span className="text-zinc-500 text-right tabular-nums">
+                  <span className="hidden md:block text-zinc-500 text-right tabular-nums">
                     {formatDuration(track.duration)}
                   </span>
 
                   {/* Date Added */}
-                  <span className="text-zinc-600 text-sm">{formatDate(track.createdAt)}</span>
+                  <span className="hidden md:block text-zinc-600 text-sm">{formatDate(track.createdAt)}</span>
 
                   {/* Favorite Button */}
                   <button
@@ -607,21 +609,23 @@ const LibraryView = () => {
                     className={`w-8 flex items-center justify-center transition-all duration-200 ${
                       isFavorited(track.id)
                         ? 'text-pink-500 hover:text-pink-400'
-                        : 'text-zinc-600 hover:text-pink-500 opacity-0 group-hover:opacity-100'
+                        : 'text-zinc-600 hover:text-pink-500 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100'
                     }`}
                     title={isFavorited(track.id) ? 'Remove from Liked Songs' : 'Add to Liked Songs'}
                   >
                     <Heart className={`w-4 h-4 ${isFavorited(track.id) ? 'fill-current' : ''}`} />
                   </button>
 
-                  {/* Delete Button */}
+                  {/* Delete Button (admin) */}
+                  {isAdmin ? (
                   <button
                     onClick={() => handleDeleteClick(track)}
-                    className="w-10 flex items-center justify-center text-zinc-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                    className="w-10 flex items-center justify-center text-zinc-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
                     title="Delete track"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
+                  ) : <span className="w-10" />}
                 </div>
               ))}
             </div>

@@ -9,7 +9,7 @@ import { parseFile } from 'music-metadata';
 import { z } from 'zod';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { db, tracks, favorites, playHistory, trackSkips } from '../db/index.js';
+import { db, tracks, favorites, playHistory, trackSkips, trackPublicColumns } from '../db/index.js';
 import { eq, ne, sql, and } from 'drizzle-orm';
 import { authMiddleware, adminMiddleware } from '../middleware/auth.js';
 import { generateFingerprint, lookupAcoustID, calculateDuplicateScore } from '../utils/fingerprint.js';
@@ -183,6 +183,7 @@ export async function trackRoutes(app: FastifyInstance) {
     preHandler: authMiddleware,
   }, async (_request: FastifyRequest, reply: FastifyReply) => {
     const allTracks = await db.query.tracks.findMany({
+      columns: trackPublicColumns,
       orderBy: (tracks, { asc }) => [asc(tracks.album), asc(tracks.title)],
     });
 
@@ -223,11 +224,12 @@ export async function trackRoutes(app: FastifyInstance) {
     return reply.send({ albums });
   });
 
-  // Get all tracks - ADMIN ONLY (for Library view)
+  // Get all tracks - ANY AUTHENTICATED USER (the library is shared; upload/edit/delete stay admin-only)
   app.get('/', {
-    preHandler: adminMiddleware,
+    preHandler: authMiddleware,
   }, async (_request: FastifyRequest, reply: FastifyReply) => {
     const allTracks = await db.query.tracks.findMany({
+      columns: trackPublicColumns,
       orderBy: (tracks, { desc }) => [desc(tracks.createdAt)],
     });
 
@@ -241,6 +243,7 @@ export async function trackRoutes(app: FastifyInstance) {
     const { id } = request.params;
 
     const track = await db.query.tracks.findFirst({
+      columns: trackPublicColumns,
       where: eq(tracks.id, id),
     });
 
@@ -263,18 +266,23 @@ export async function trackRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'No file uploaded' });
     }
 
-    // Validate file type
-    const validMimeTypes = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/m4a', 'audio/aac', 'audio/x-m4a'];
-    if (!validMimeTypes.includes(data.mimetype)) {
+    // Validate file type. Browsers report inconsistent MIME types for FLAC/WAV/M4A
+    // (e.g. audio/x-flac, audio/wave, or application/octet-stream), so accept by extension too.
+    const validMimeTypes = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/wave', 'audio/x-wav', 'audio/ogg', 'audio/flac', 'audio/x-flac', 'audio/m4a', 'audio/aac', 'audio/x-m4a', 'audio/mp4'];
+    const validExtensions = ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'];
+    const uploadExt = data.filename.split('.').pop()?.toLowerCase() ?? '';
+    if (!validMimeTypes.includes(data.mimetype) && !validExtensions.includes(uploadExt)) {
       return reply.status(400).send({ error: 'Invalid file type. Supported: MP3, WAV, OGG, FLAC, M4A, AAC' });
     }
 
     const trackId = uuidv4();
-    const originalExt = data.filename.split('.').pop() || 'mp3';
+    const originalExt = validExtensions.includes(uploadExt) ? uploadExt : 'mp3';
     const tempFilename = `${trackId}_temp.${originalExt}`;
     const tempFilePath = join(TEMP_DIR, tempFilename);
     const finalFilename = `${trackId}.mp3`; // Always output as MP3
     const finalFilePath = join(UPLOADS_DIR, finalFilename);
+
+    let coverArtPath: string | undefined;
 
     try {
       // Save original file to temp location
@@ -287,7 +295,6 @@ export async function trackRoutes(app: FastifyInstance) {
       let title = data.filename.replace(/\.[^/.]+$/, ''); // Default to filename
 
       // Parse metadata + cover art in a single call
-      let coverArtPath: string | undefined;
       try {
         const metadata = await parseFile(tempFilePath);
         duration = Math.round(metadata.format.duration || 0);
@@ -308,38 +315,8 @@ export async function trackRoutes(app: FastifyInstance) {
         console.warn('Failed to parse audio metadata:', err);
       }
 
-      // Compress audio to 192kbps MP3
-      const isAlreadyCompressedMp3 = data.mimetype === 'audio/mpeg' || data.mimetype === 'audio/mp3';
-
-      if (isAlreadyCompressedMp3) {
-        // Check if MP3 is already low bitrate (skip compression if under 256kbps)
-        try {
-          const metadata = await parseFile(tempFilePath);
-          const bitrate = metadata.format.bitrate || 0;
-          if (bitrate <= 256000) {
-            // Already compressed enough, just move the file
-            const { rename } = await import('fs/promises');
-            await rename(tempFilePath, finalFilePath);
-          } else {
-            // Compress high bitrate MP3
-            await compressAudio(tempFilePath, finalFilePath);
-            await unlink(tempFilePath);
-          }
-        } catch {
-          // If we can't read bitrate, compress anyway
-          await compressAudio(tempFilePath, finalFilePath);
-          await unlink(tempFilePath);
-        }
-      } else {
-        // Compress non-MP3 formats
-        await compressAudio(tempFilePath, finalFilePath);
-        await unlink(tempFilePath);
-      }
-
-      // Get final file size for logging
-      const finalStats = await stat(finalFilePath);
-      console.log(`Track ${trackId} compressed: ${(finalStats.size / 1024 / 1024).toFixed(2)}MB`);
-
+      // Duplicate detection runs on the original upload, before the (slow) ffmpeg pass,
+      // so rejected duplicates never pay for compression.
       // Check ?force=true — skip duplicate detection if admin confirmed override
       const forceUpload = (request.query as Record<string, string>)?.force === 'true';
 
@@ -348,22 +325,18 @@ export async function trackRoutes(app: FastifyInstance) {
       let fpAcoustidId: string | null = null;
       let fpMusicbrainzId: string | null = null;
 
-      if (!forceUpload) {
-        // Generate acoustic fingerprint
-        const fp = await generateFingerprint(finalFilePath);
-        if (fp) {
-          fpFingerprint = fp.fingerprint;
+      // Always fingerprint (also on forced uploads) so the track can be matched later
+      const fp = await generateFingerprint(tempFilePath);
+      if (fp) {
+        fpFingerprint = fp.fingerprint;
+        const acoustidResult = await lookupAcoustID(fp.fingerprint, fp.duration);
+        if (acoustidResult) {
+          fpAcoustidId = acoustidResult.acoustidId;
+          fpMusicbrainzId = acoustidResult.musicbrainzRecordingId;
         }
+      }
 
-        // Look up AcoustID / MusicBrainz (non-blocking, silent fail)
-        let acoustidResult = null;
-        if (fp) {
-          acoustidResult = await lookupAcoustID(fp.fingerprint, fp.duration);
-          if (acoustidResult) {
-            fpAcoustidId = acoustidResult.acoustidId;
-            fpMusicbrainzId = acoustidResult.musicbrainzRecordingId;
-          }
-        }
+      if (!forceUpload) {
 
         // Build incoming track meta for scoring
         const incomingMeta = {
@@ -406,20 +379,54 @@ export async function trackRoutes(app: FastifyInstance) {
         }
 
         if (bestScore >= 60 && bestMatch && bestResult) {
-          // Clean up temp + final files before returning 409
-          // Note: tempFilePath may already be gone if renamed (low-bitrate MP3 path)
-          try { await unlink(tempFilePath); } catch { /* already moved or never created */ }
-          try { await unlink(finalFilePath); } catch { /* ignore */ }
+          // Duplicate detected before compression, so only the temp upload needs cleaning up
+          try { await unlink(tempFilePath); } catch { /* ignore */ }
+          if (coverArtPath) {
+            try { await unlink(join(UPLOADS_BASE, coverArtPath)); } catch { /* ignore */ }
+          }
 
+          const { acoustidFingerprint: _fp, ...existingTrack } = bestMatch;
           return reply.status(409).send({
             duplicate: {
               score: bestScore,
               breakdown: bestResult.breakdown,
-              existingTrack: bestMatch,
+              existingTrack,
             },
           });
         }
       }
+
+      // Compress audio to 192kbps MP3
+      const isAlreadyCompressedMp3 = data.mimetype === 'audio/mpeg' || data.mimetype === 'audio/mp3' || uploadExt === 'mp3';
+
+      if (isAlreadyCompressedMp3) {
+        // Check if MP3 is already low bitrate (skip compression if under 256kbps)
+        try {
+          const metadata = await parseFile(tempFilePath);
+          const bitrate = metadata.format.bitrate || 0;
+          if (bitrate <= 256000) {
+            // Already compressed enough, just move the file
+            const { rename } = await import('fs/promises');
+            await rename(tempFilePath, finalFilePath);
+          } else {
+            // Compress high bitrate MP3
+            await compressAudio(tempFilePath, finalFilePath);
+            await unlink(tempFilePath);
+          }
+        } catch {
+          // If we can't read bitrate, compress anyway
+          await compressAudio(tempFilePath, finalFilePath);
+          await unlink(tempFilePath);
+        }
+      } else {
+        // Compress non-MP3 formats
+        await compressAudio(tempFilePath, finalFilePath);
+        await unlink(tempFilePath);
+      }
+
+      // Get final file size for logging
+      const finalStats = await stat(finalFilePath);
+      console.log(`Track ${trackId} compressed: ${(finalStats.size / 1024 / 1024).toFixed(2)}MB`);
 
       // Analyze audio for Radio mode (BPM, key, energy)
       const analysis = await analyzeAudio(finalFilePath);
@@ -448,6 +455,7 @@ export async function trackRoutes(app: FastifyInstance) {
       });
 
       const track = await db.query.tracks.findFirst({
+        columns: trackPublicColumns,
         where: eq(tracks.id, trackId),
       });
 
@@ -460,6 +468,9 @@ export async function trackRoutes(app: FastifyInstance) {
       try {
         await unlink(finalFilePath);
       } catch { /* ignore */ }
+      if (coverArtPath) {
+        try { await unlink(join(UPLOADS_BASE, coverArtPath)); } catch { /* ignore */ }
+      }
 
       console.error('Track upload error:', error);
       return reply.status(500).send({ error: 'Failed to process audio file' });
@@ -537,8 +548,15 @@ export async function trackRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Track not found' });
     }
 
-    // Redirect to static file server
-    return reply.redirect(`/uploads/${track.filePath}`);
+    const filePath = resolveStoredFilePath(track.filePath);
+    if (!filePath) {
+      return reply.status(404).send({ error: 'Track file not found' });
+    }
+
+    // sendFile handles Range requests (seeking, progressive playback) and ETags.
+    // Audio files are immutable (UUID names), so the browser may cache them privately.
+    reply.header('Cache-Control', 'private, max-age=604800');
+    return reply.sendFile(track.filePath, UPLOADS_BASE, { cacheControl: false });
   });
 
   // Get similar tracks for Radio mode - ANY AUTHENTICATED USER
@@ -564,6 +582,7 @@ export async function trackRoutes(app: FastifyInstance) {
       : [];
 
     const sourceTrack = await db.query.tracks.findFirst({
+      columns: trackPublicColumns,
       where: eq(tracks.id, id),
     });
 
@@ -573,6 +592,7 @@ export async function trackRoutes(app: FastifyInstance) {
 
     // Get all tracks except the source
     const allOtherTracks = await db.query.tracks.findMany({
+      columns: trackPublicColumns,
       where: ne(tracks.id, id),
     });
 
@@ -750,7 +770,9 @@ export async function trackRoutes(app: FastifyInstance) {
     preHandler: adminMiddleware,
   }, async (_request: FastifyRequest, reply: FastifyReply) => {
     // Get all tracks that haven't been analyzed yet (energy is null)
-    const unanalyzedTracks = await db.query.tracks.findMany();
+    const unanalyzedTracks = await db.query.tracks.findMany({
+      columns: { id: true, filePath: true, energy: true },
+    });
     const tracksToAnalyze = unanalyzedTracks.filter(t => t.energy === null);
 
     if (tracksToAnalyze.length === 0) {
@@ -760,6 +782,14 @@ export async function trackRoutes(app: FastifyInstance) {
         total: unanalyzedTracks.length,
       });
     }
+
+    // Return immediately — analysis runs in the background (can take minutes for a large library)
+    reply.status(202).send({
+      message: 'Analysis started',
+      analyzed: 0,
+      failed: 0,
+      total: tracksToAnalyze.length,
+    });
 
     let analyzed = 0;
     let failed = 0;
@@ -790,19 +820,16 @@ export async function trackRoutes(app: FastifyInstance) {
       }
     }
 
-    return reply.send({
-      message: 'Analysis complete',
-      analyzed,
-      failed,
-      total: unanalyzedTracks.length,
-    });
+    console.log(`Analysis complete: ${analyzed} analyzed, ${failed} failed of ${tracksToAnalyze.length}`);
   });
 
   // Fingerprint existing tracks that haven't been fingerprinted yet — ADMIN ONLY
   app.post('/fingerprint-all', {
     preHandler: adminMiddleware,
   }, async (_request: FastifyRequest, reply: FastifyReply) => {
-    const allTracks = await db.query.tracks.findMany();
+    const allTracks = await db.query.tracks.findMany({
+      columns: { id: true, filePath: true, acoustidFingerprint: true },
+    });
     const toFingerprint = allTracks.filter(t => !t.acoustidFingerprint);
 
     if (toFingerprint.length === 0) {
@@ -883,6 +910,7 @@ export async function trackRoutes(app: FastifyInstance) {
       .where(eq(tracks.id, id));
 
     const updatedTrack = await db.query.tracks.findFirst({
+      columns: trackPublicColumns,
       where: eq(tracks.id, id),
     });
 

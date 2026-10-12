@@ -56,6 +56,7 @@ export async function userRoutes(app: FastifyInstance) {
   // Get user profile
   app.get('/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const { id } = request.params;
+    const { userId } = request.user as { userId: string };
 
     const user = await db.query.users.findFirst({
       where: eq(users.id, id),
@@ -68,7 +69,8 @@ export async function userRoutes(app: FastifyInstance) {
     return reply.send({
       id: user.id,
       username: user.username,
-      email: user.email,
+      // Email is private: only returned for your own profile
+      email: userId === id ? user.email : null,
       profileImage: user.profileImage,
       createdAt: user.createdAt,
     });
@@ -204,7 +206,7 @@ export async function userRoutes(app: FastifyInstance) {
 
     // Generate unique filename with validated extension
     const ext = getSafeExtension(data.filename);
-    const filename = `avatar-${id}.${ext}`;
+    const filename = `avatar-${id}-${Date.now().toString(36)}.${ext}`; // versioned name: images are cached for 7 days
     const filePath = join(IMAGES_DIR, filename);
 
     // Delete old avatar if exists and is a local file (secure path resolution)
