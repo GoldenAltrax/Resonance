@@ -8,7 +8,7 @@
 # Set RESONANCE_HOST in .env (e.g. your-vm.tailXXXX.ts.net), or replace it with a public
 # domain to get a Let's Encrypt certificate instead.
 
-{$RESONANCE_HOST:ubuntu-minecraft-vm.tail1d6ee2.ts.net} {
+{$RESONANCE_HOST:minecraft.tail93f9bc.ts.net} {
     reverse_proxy resonance:3000
 
     # Compress text responses only; audio is already compressed and must keep Range support

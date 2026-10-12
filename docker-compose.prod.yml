@@ -10,7 +10,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      - RESONANCE_HOST=${RESONANCE_HOST:-ubuntu-minecraft-vm.tail1d6ee2.ts.net}
+      - RESONANCE_HOST=${RESONANCE_HOST:-minecraft.tail93f9bc.ts.net}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -38,7 +38,7 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - ADMIN_USERNAME=${ADMIN_USERNAME}
       - ADMIN_EMAIL=${ADMIN_EMAIL}
-      - FRONTEND_URL=https://${RESONANCE_HOST:-ubuntu-minecraft-vm.tail1d6ee2.ts.net}
+      - FRONTEND_URL=https://${RESONANCE_HOST:-minecraft.tail93f9bc.ts.net}
       - ACOUSTID_API_KEY=${ACOUSTID_API_KEY:-}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]

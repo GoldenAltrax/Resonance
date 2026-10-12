@@ -63,6 +63,7 @@ Summary*.md
 Oracle_Cloud/
 *.key
 *.pem
+*.crt
 *.keystore
 
 

@@ -10,3 +10,6 @@ backend/dist
 *.tar.gz
 resonance-backup*
 backups
+*.key
+*.crt
+*.pem
