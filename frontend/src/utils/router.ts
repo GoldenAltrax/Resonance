@@ -19,6 +19,7 @@ const STATIC_PATHS: Record<Exclude<Page, 'playlist-detail'>, string> = {
   settings: '/settings',
   admin: '/admin',
   albums: '/albums',
+  'add-music': '/add',
 };
 
 const ROUTE_CHANGE = 'resonance:navigate';

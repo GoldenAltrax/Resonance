@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Home, Library, Search, Settings, Music2, LogOut, Shield, Music, Heart, Disc3, ListMusic } from 'lucide-react';
+import { Home, Library, Search, Settings, Music2, LogOut, Shield, Music, Heart, Disc3, ListMusic, CirclePlus } from 'lucide-react';
 import { Page } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
 import { usePlayerStore } from '@/stores/playerStore';
@@ -109,6 +109,20 @@ const Sidebar = () => {
 
       {/* Footer */}
       <div className={`px-3 pt-3 border-t border-zinc-800/40 space-y-0.5 ${hasTrack ? 'pb-28' : 'pb-4'}`}>
+        {isAdmin && (
+          <button
+            onClick={() => navigate('add-music')}
+            aria-current={activePage === 'add-music' ? 'page' : undefined}
+            className={`flex items-center gap-3.5 w-full px-4 py-2.5 rounded-lg transition-all duration-200 group text-sm font-medium ${
+              activePage === 'add-music'
+                ? 'bg-zinc-800/70 text-white'
+                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/30'
+            }`}
+          >
+            <CirclePlus className="w-4 h-4 flex-shrink-0" />
+            Add music
+          </button>
+        )}
         {isAdmin && (
           <button
             onClick={() => navigate('admin')}

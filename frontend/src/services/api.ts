@@ -352,6 +352,55 @@ class ApiClient {
     });
   }
 
+  // "Add music" download pipeline (admin)
+  async searchCatalog(q: string, type: 'songs' | 'albums') {
+    return this.request<{ songs?: CatalogSong[]; albums?: CatalogAlbum[] }>(
+      `/downloads/search?q=${encodeURIComponent(q)}&type=${type}`
+    );
+  }
+
+  async requestDownloads(body: { tracks: CatalogSong[] } | { albumId: string }) {
+    return this.request<EnqueueResult>('/downloads/requests', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  async importLink(url: string, createPlaylist: boolean) {
+    return this.request<EnqueueResult>('/downloads/link', { method: 'POST', body: JSON.stringify({ url, createPlaylist }) });
+  }
+
+  async getDownloadJobs() {
+    return this.request<{ jobs: DownloadJob[]; counts: Partial<Record<DownloadStatus, number>> }>('/downloads/jobs');
+  }
+
+  async retryDownload(id: string) {
+    return this.request<{ ok: true }>(`/downloads/jobs/${id}/retry`, { method: 'POST' });
+  }
+
+  async retryFailedDownloads() {
+    return this.request<{ retried: number }>('/downloads/jobs/retry-failed', { method: 'POST' });
+  }
+
+  async removeDownload(id: string) {
+    return this.request<void>(`/downloads/jobs/${id}`, { method: 'DELETE' });
+  }
+
+  async clearFinishedDownloads() {
+    return this.request<{ removed: number }>('/downloads/jobs/clear-finished', { method: 'POST' });
+  }
+
+  async getDownloaderStatus() {
+    return this.request<{ available: boolean; ytdlpVersion: string | null }>('/downloads/status');
+  }
+
+  async updateDownloader() {
+    return this.request<{ ytdlpVersion: string | null }>('/downloads/update-downloader', { method: 'POST' });
+  }
+
+  async deleteUser(id: string) {
+    return this.request<{ playlists: number; tracksKept: number }>('/admin/users/' + id, {
+      method: 'DELETE',
+    });
+  }
+
   async deleteInviteCode(id: string) {
     return this.request<void>('/admin/invite-codes/' + id, {
       method: 'DELETE',
@@ -480,6 +529,52 @@ export interface AdminStats {
   activeInviteCodes: number;
 }
 
+export interface CatalogSong {
+  title: string;
+  artist: string | null;
+  album?: string | null;
+  duration?: number | null;
+  coverUrl?: string | null;
+  externalId?: string | null;
+  inLibrary?: boolean;
+  queued?: boolean;
+}
+
+export interface CatalogAlbum {
+  id: string;
+  title: string;
+  artist: string;
+  coverUrl: string | null;
+  trackCount: number;
+  year: number | null;
+}
+
+export type DownloadStatus = 'queued' | 'searching' | 'downloading' | 'importing' | 'done' | 'skipped' | 'failed';
+
+export interface DownloadJob {
+  id: string;
+  status: DownloadStatus;
+  title: string;
+  artist: string | null;
+  album: string | null;
+  coverUrl: string | null;
+  batchLabel: string | null;
+  error: string | null;
+  trackId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EnqueueResult {
+  queued: number;
+  alreadyInLibrary: number;
+  alreadyQueued: number;
+  label?: string | null;
+  kind?: 'track' | 'album' | 'playlist';
+  total?: number;
+  playlistId?: string | null;
+}
+
 export interface AdminUser {
   id: string;
   username: string;
@@ -488,6 +583,7 @@ export interface AdminUser {
   createdAt: string;
   trackCount: number;
   playlistCount: number;
+  isAdmin: boolean;
 }
 
 export interface InviteCode {

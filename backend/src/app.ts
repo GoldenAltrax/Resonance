@@ -37,6 +37,8 @@ const { searchRoutes } = await import('./routes/search.js');
 const { adminRoutes } = await import('./routes/admin.js');
 const { favoriteRoutes } = await import('./routes/favorites.js');
 const { historyRoutes } = await import('./routes/history.js');
+const { downloadRoutes } = await import('./routes/downloads.js');
+const { startDownloader } = await import('./services/downloader.js');
 const { sqlite } = await import('./db/index.js');
 
 const app = Fastify({
@@ -144,6 +146,7 @@ await app.register(searchRoutes, { prefix: '/api/search' });
 await app.register(adminRoutes, { prefix: '/api/admin' });
 await app.register(favoriteRoutes, { prefix: '/api/favorites' });
 await app.register(historyRoutes, { prefix: '/api/history' });
+await app.register(downloadRoutes, { prefix: '/api/downloads' });
 
 // Health check
 app.get('/api/health', async () => {
@@ -183,6 +186,11 @@ const start = async () => {
   try {
     const port = parseInt(process.env.PORT || '3000', 10);
     await app.listen({ port, host: '0.0.0.0' });
+    try {
+      startDownloader(); // resume any queued "Add music" downloads
+    } catch (err) {
+      app.log.error(err, 'download queue unavailable (database migrations not applied?)');
+    }
   } catch (err) {
     app.log.error(err);
     process.exit(1);

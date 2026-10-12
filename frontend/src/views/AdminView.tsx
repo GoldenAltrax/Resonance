@@ -2,6 +2,7 @@ import { useState, useEffect, FormEvent } from 'react';
 import { Users, Music, ListMusic, Ticket, Plus, Trash2, Copy, Check, X, RefreshCw, ToggleLeft, ToggleRight, Terminal, Fingerprint, Activity } from 'lucide-react';
 import { api, AdminStats, AdminUser, InviteCode } from '@/services/api';
 import { toast } from '@/stores/toastStore';
+import { useAuthStore } from '@/stores/authStore';
 
 const AdminView = () => {
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -18,6 +19,10 @@ const AdminView = () => {
   const [isCreating, setIsCreating] = useState(false);
   const [isFingerprintingAll, setIsFingerprintingAll] = useState(false);
   const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
+  const currentUserId = useAuthStore((s) => s.user?.id);
+  const [userToDelete, setUserToDelete] = useState<AdminUser | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -65,6 +70,37 @@ const AdminView = () => {
       toast.error(err instanceof Error ? err.message : 'Failed to create invite code');
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const closeDeleteUser = () => {
+    if (isDeletingUser) return;
+    setUserToDelete(null);
+    setDeleteConfirmText('');
+  };
+
+  const handleDeleteUser = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!userToDelete || deleteConfirmText !== userToDelete.username) return;
+    setIsDeletingUser(true);
+    try {
+      await api.deleteUser(userToDelete.id);
+      // Their uploads stay in the library and now belong to the admin who deleted them
+      setUsers((prev) => prev
+        .filter((u) => u.id !== userToDelete.id)
+        .map((u) => (u.id === currentUserId ? { ...u, trackCount: u.trackCount + userToDelete.trackCount } : u)));
+      setStats((prev) => prev && {
+        ...prev,
+        users: prev.users - 1,
+        playlists: prev.playlists - userToDelete.playlistCount,
+      });
+      toast.success(`Deleted ${userToDelete.username}`);
+      setUserToDelete(null);
+      setDeleteConfirmText('');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete user');
+    } finally {
+      setIsDeletingUser(false);
     }
   };
 
@@ -282,6 +318,18 @@ const AdminView = () => {
                   <div className="text-center min-w-[100px]">
                     <p className="text-zinc-400 text-xs">Joined {formatDate(u.createdAt)}</p>
                   </div>
+                  {u.isAdmin || u.id === currentUserId ? (
+                    <span className="w-9 text-center text-[10px] uppercase tracking-wider text-zinc-600">Admin</span>
+                  ) : (
+                    <button
+                      onClick={() => setUserToDelete(u)}
+                      className="p-2 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-red-500/20 transition-all"
+                      title={`Delete ${u.username}`}
+                      aria-label={`Delete ${u.username}`}
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -409,6 +457,74 @@ const AdminView = () => {
                 {isAnalyzingAll ? 'Starting...' : 'Analyze Unprocessed Tracks'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete User Modal */}
+      {userToDelete && (
+        <div
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 pb-28"
+          onClick={closeDeleteUser}
+          onKeyDown={(e) => e.key === 'Escape' && closeDeleteUser()}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-user-title"
+            className="bg-[#111111] border border-zinc-800 rounded-2xl p-6 w-full max-w-md shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 id="delete-user-title" className="text-lg font-medium text-white">Delete {userToDelete.username}?</h3>
+              <button onClick={closeDeleteUser} className="text-zinc-500 hover:text-white transition-colors" aria-label="Close">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-sm text-zinc-400 mb-3">This permanently deletes the account and its personal data:</p>
+            <ul className="text-sm text-zinc-300 space-y-1 mb-3 list-disc pl-5">
+              <li>{userToDelete.playlistCount} playlist{userToDelete.playlistCount === 1 ? '' : 's'}</li>
+              <li>Liked songs, play history and profile picture</li>
+            </ul>
+            {userToDelete.trackCount > 0 && (
+              <p className="text-xs text-zinc-500 mb-5">
+                The {userToDelete.trackCount} track{userToDelete.trackCount === 1 ? '' : 's'} they uploaded stay in the library and move to your account.
+              </p>
+            )}
+
+            <form onSubmit={handleDeleteUser} className="space-y-4">
+              <div className="space-y-1">
+                <label htmlFor="delete-user-confirm" className="text-xs text-zinc-500 px-1">
+                  Type <span className="font-mono text-zinc-300">{userToDelete.username}</span> to confirm
+                </label>
+                <input
+                  id="delete-user-confirm"
+                  type="text"
+                  autoFocus
+                  autoComplete="off"
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  className="w-full bg-[#161616] border border-zinc-800 rounded-xl px-4 py-3 text-white placeholder-zinc-700 focus:outline-none focus:ring-1 focus:ring-red-500/50"
+                />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={closeDeleteUser}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 hover:bg-zinc-800 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={deleteConfirmText !== userToDelete.username || isDeletingUser}
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-red-500/20 text-red-400 hover:bg-red-500/30 border border-red-500/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {isDeletingUser ? 'Deleting...' : 'Delete user'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

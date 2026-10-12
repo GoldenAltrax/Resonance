@@ -3,8 +3,20 @@ import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { db, users, tracks, playlists, inviteCodes } from '../db/index.js';
 import { eq, count, desc, sql } from 'drizzle-orm';
-import { adminMiddleware } from '../middleware/auth.js';
+import { adminMiddleware, isAdmin } from '../middleware/auth.js';
 import crypto from 'crypto';
+import { unlink } from 'fs/promises';
+import { resolve, sep } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const UPLOADS_BASE = resolve(__dirname, '..', '..', 'uploads');
+
+// Resolve a stored upload path ("audio/x.mp3", "images/y.jpg"), refusing anything outside uploads/
+function resolveStoredFilePath(storedPath: string): string | null {
+  const fullPath = resolve(UPLOADS_BASE, storedPath);
+  return fullPath.startsWith(UPLOADS_BASE + sep) ? fullPath : null;
+}
 
 // Generate a random invite code with sufficient entropy (8 bytes = 64 bits)
 function generateInviteCode(): string {
@@ -58,13 +70,58 @@ export async function adminRoutes(app: FastifyInstance) {
         email: users.email,
         profileImage: users.profileImage,
         createdAt: users.createdAt,
-        trackCount: sql<number>`(SELECT COUNT(*) FROM tracks WHERE tracks.user_id = ${users.id})`.as('track_count'),
-        playlistCount: sql<number>`(SELECT COUNT(*) FROM playlists WHERE playlists.user_id = ${users.id})`.as('playlist_count'),
+        trackCount: sql<number>`(SELECT COUNT(*) FROM tracks WHERE tracks.user_id = users.id)`.as('track_count'),
+        playlistCount: sql<number>`(SELECT COUNT(*) FROM playlists WHERE playlists.user_id = users.id)`.as('playlist_count'),
       })
       .from(users)
       .orderBy(desc(users.createdAt));
 
-    return reply.send(usersWithStats);
+    return reply.send(usersWithStats.map((u) => ({ ...u, isAdmin: isAdmin(u.username, u.email) })));
+  });
+
+  // Delete a user and their personal data: playlists, likes, play history, skips, avatar.
+  // The library is shared, so tracks they uploaded stay and are handed to the admin doing
+  // the delete (tracks.user_id cascades, so it must be reassigned first).
+  app.delete('/users/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    const { id } = request.params;
+    const { userId } = request.user as { userId: string };
+
+    if (id === userId) {
+      return reply.status(400).send({ error: 'You cannot delete your own account' });
+    }
+
+    const user = await db.query.users.findFirst({ where: eq(users.id, id) });
+    if (!user) {
+      return reply.status(404).send({ error: 'User not found' });
+    }
+    if (isAdmin(user.username, user.email)) {
+      return reply.status(400).send({ error: 'Admin accounts cannot be deleted' });
+    }
+
+    const ownedPlaylists = await db
+      .select({ coverImage: playlists.coverImage })
+      .from(playlists)
+      .where(eq(playlists.userId, id));
+
+    const files = [...ownedPlaylists.map((p) => p.coverImage), user.profileImage]
+      .filter((p): p is string => !!p && !p.startsWith('http'));
+
+    const tracksKept = db.transaction((tx) => {
+      const moved = tx.update(tracks).set({ userId }).where(eq(tracks.userId, id)).run().changes;
+      tx.delete(users).where(eq(users.id, id)).run();
+      return moved;
+    });
+
+    // Rows are gone at this point; a missing file is not an error
+    await Promise.all(
+      files.map(async (stored) => {
+        const fullPath = resolveStoredFilePath(stored);
+        if (fullPath) await unlink(fullPath).catch(() => {});
+      })
+    );
+
+    request.log.info({ deletedUser: user.username, playlists: ownedPlaylists.length, tracksKept }, 'user deleted');
+    return reply.send({ playlists: ownedPlaylists.length, tracksKept });
   });
 
   // Get all invite codes

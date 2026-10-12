@@ -1,20 +1,16 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
 import { createWriteStream } from 'fs';
-import { mkdir, unlink, stat, writeFile } from 'fs/promises';
+import { unlink } from 'fs/promises';
 import { pipeline } from 'stream/promises';
 import { join, resolve } from 'path';
-import { fileURLToPath } from 'url';
 import { parseFile } from 'music-metadata';
 import { z } from 'zod';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { db, tracks, favorites, playHistory, trackSkips, trackPublicColumns } from '../db/index.js';
 import { eq, ne, sql, and } from 'drizzle-orm';
 import { authMiddleware, adminMiddleware } from '../middleware/auth.js';
-import { generateFingerprint, lookupAcoustID, calculateDuplicateScore } from '../utils/fingerprint.js';
-
-const execFileAsync = promisify(execFile);
+import { generateFingerprint, lookupAcoustID } from '../utils/fingerprint.js';
+import { ingestAudioFile, analyzeAudio, TEMP_DIR, UPLOADS_BASE } from '../services/ingest.js';
 
 // Schema for logging a track skip
 const skipTrackSchema = z.object({
@@ -28,16 +24,6 @@ const updateTrackSchema = z.object({
   album: z.string().max(200).trim().nullable().optional(),
 });
 
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const UPLOADS_DIR = resolve(__dirname, '..', '..', 'uploads', 'audio');
-const UPLOADS_BASE = resolve(__dirname, '..', '..', 'uploads');
-const TEMP_DIR = resolve(__dirname, '..', '..', 'uploads', 'temp');
-const IMAGES_DIR = resolve(__dirname, '..', '..', 'uploads', 'images');
-
-// Ensure directories exist
-await mkdir(UPLOADS_DIR, { recursive: true });
-await mkdir(TEMP_DIR, { recursive: true });
-await mkdir(IMAGES_DIR, { recursive: true });
 
 // Resolve path from stored filePath (e.g., "audio/uuid.mp3")
 function resolveStoredFilePath(storedPath: string): string | null {
@@ -78,84 +64,6 @@ const KEY_COMPATIBILITY: Record<string, string[]> = {
   'Fm': ['Fm', 'Ab', 'Cm', 'Bbm', 'Eb', 'Db'],
   'Bbm': ['Bbm', 'Db', 'Fm', 'Ebm', 'Ab', 'Gb'],
 };
-
-// Compress audio to 192kbps MP3 using ffmpeg
-async function compressAudio(inputPath: string, outputPath: string): Promise<void> {
-  try {
-    await execFileAsync('ffmpeg', [
-      '-i', inputPath,
-      '-codec:a', 'libmp3lame',
-      '-b:a', '192k',
-      '-y', // Overwrite output file if exists
-      outputPath
-    ]);
-  } catch (error) {
-    console.error('FFmpeg compression failed:', error);
-    throw new Error('Audio compression failed');
-  }
-}
-
-// Analyze audio for BPM, key, and energy using ffprobe
-interface AudioAnalysis {
-  bpm: number | null;
-  key: string | null;
-  energy: number | null;
-}
-
-async function analyzeAudio(filePath: string): Promise<AudioAnalysis> {
-  const result: AudioAnalysis = { bpm: null, key: null, energy: null };
-
-  try {
-    // Try to get audio stats for energy calculation
-    try {
-      const { stderr: volumeStats } = await execFileAsync('ffmpeg', [
-        '-i', filePath,
-        '-af', 'volumedetect',
-        '-f', 'null',
-        '-'
-      ], { maxBuffer: 10 * 1024 * 1024 } as { maxBuffer: number });
-
-      // Parse mean volume to calculate energy (0-100 scale)
-      const meanMatch = volumeStats?.match(/mean_volume:\s*(-?\d+\.?\d*)\s*dB/);
-      if (meanMatch && meanMatch[1]) {
-        const meanDb = parseFloat(meanMatch[1]);
-        // Convert dB to 0-100 scale (typical range is -60dB to 0dB)
-        // -60dB = 0 energy, 0dB = 100 energy
-        result.energy = Math.max(0, Math.min(100, Math.round((meanDb + 60) * (100 / 60))));
-      }
-    } catch {
-      // Volume detection failed, leave energy as null
-    }
-
-    // Try to extract BPM from metadata (some files have it in ID3 tags)
-    try {
-      const metadata = await parseFile(filePath);
-      if (metadata.native) {
-        // Check various tag formats for BPM
-        for (const format of Object.values(metadata.native)) {
-          for (const tag of format) {
-            if (tag.id === 'TBPM' || tag.id === 'BPM' || tag.id === 'bpm') {
-              const bpmValue = parseInt(String(tag.value), 10);
-              if (!isNaN(bpmValue) && bpmValue > 0 && bpmValue < 300) {
-                result.bpm = bpmValue;
-              }
-            }
-            // Check for initial key
-            if (tag.id === 'TKEY' || tag.id === 'KEY' || tag.id === 'key' || tag.id === 'initialkey') {
-              result.key = String(tag.value).trim();
-            }
-          }
-        }
-      }
-    } catch {
-      // Metadata parsing failed
-    }
-  } catch (error) {
-    console.warn('Audio analysis failed:', error);
-  }
-
-  return result;
-}
 
 // Check if two keys are compatible (for Radio mode)
 export function areKeysCompatible(key1: string | null, key2: string | null): boolean {
@@ -254,7 +162,7 @@ export async function trackRoutes(app: FastifyInstance) {
     return reply.send(track);
   });
 
-  // Upload new track - ADMIN ONLY with compression
+  // Upload new track - ADMIN ONLY. Processing (tags, duplicate check, transcoding, analysis) lives in services/ingest.ts
   app.post('/', {
     preHandler: adminMiddleware,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
@@ -275,203 +183,32 @@ export async function trackRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'Invalid file type. Supported: MP3, WAV, OGG, FLAC, M4A, AAC' });
     }
 
-    const trackId = uuidv4();
     const originalExt = validExtensions.includes(uploadExt) ? uploadExt : 'mp3';
-    const tempFilename = `${trackId}_temp.${originalExt}`;
-    const tempFilePath = join(TEMP_DIR, tempFilename);
-    const finalFilename = `${trackId}.mp3`; // Always output as MP3
-    const finalFilePath = join(UPLOADS_DIR, finalFilename);
-
-    let coverArtPath: string | undefined;
+    const tempFilePath = join(TEMP_DIR, `${uuidv4()}_upload.${originalExt}`);
 
     try {
-      // Save original file to temp location
       await pipeline(data.file, createWriteStream(tempFilePath));
 
-      // Extract metadata from original file before compression
-      let duration = 0;
-      let artist = 'Unknown Artist';
-      let album: string | undefined;
-      let title = data.filename.replace(/\.[^/.]+$/, ''); // Default to filename
-
-      // Parse metadata + cover art in a single call
-      try {
-        const metadata = await parseFile(tempFilePath);
-        duration = Math.round(metadata.format.duration || 0);
-
-        if (metadata.common.title) title = metadata.common.title;
-        if (metadata.common.artist) artist = metadata.common.artist;
-        if (metadata.common.album) album = metadata.common.album;
-
-        // Extract embedded cover art
-        const picture = metadata.common.picture?.[0];
-        if (picture) {
-          const ext = picture.format.split('/').pop()?.replace('jpeg', 'jpg') || 'jpg';
-          const coverFilename = `cover-${trackId}.${ext}`;
-          await writeFile(join(IMAGES_DIR, coverFilename), picture.data);
-          coverArtPath = `images/${coverFilename}`;
-        }
-      } catch (err) {
-        console.warn('Failed to parse audio metadata:', err);
-      }
-
-      // Duplicate detection runs on the original upload, before the (slow) ffmpeg pass,
-      // so rejected duplicates never pay for compression.
-      // Check ?force=true — skip duplicate detection if admin confirmed override
-      const forceUpload = (request.query as Record<string, string>)?.force === 'true';
-
-      // Fingerprint data to carry through to DB insert
-      let fpFingerprint: string | null = null;
-      let fpAcoustidId: string | null = null;
-      let fpMusicbrainzId: string | null = null;
-
-      // Always fingerprint (also on forced uploads) so the track can be matched later
-      const fp = await generateFingerprint(tempFilePath);
-      if (fp) {
-        fpFingerprint = fp.fingerprint;
-        const acoustidResult = await lookupAcoustID(fp.fingerprint, fp.duration);
-        if (acoustidResult) {
-          fpAcoustidId = acoustidResult.acoustidId;
-          fpMusicbrainzId = acoustidResult.musicbrainzRecordingId;
-        }
-      }
-
-      if (!forceUpload) {
-
-        // Build incoming track meta for scoring
-        const incomingMeta = {
-          title,
-          artist,
-          duration,
-          originalFilename: data.filename.replace(/\.[^/.]+$/, ''),
-          musicbrainzRecordingId: fpMusicbrainzId,
-          acoustidFingerprint: fpFingerprint,
-        };
-
-        // Score against all existing tracks
-        const candidates = await db.select({
-          id: tracks.id,
-          title: tracks.title,
-          artist: tracks.artist,
-          duration: tracks.duration,
-          originalFilename: tracks.originalFilename,
-          musicbrainzRecordingId: tracks.musicbrainzRecordingId,
-          acoustidFingerprint: tracks.acoustidFingerprint,
-        }).from(tracks);
-        let bestScore = 0;
-        let bestMatch: typeof candidates[number] | null = null;
-        let bestResult: ReturnType<typeof calculateDuplicateScore> | null = null;
-
-        for (const candidate of candidates) {
-          const result = calculateDuplicateScore(incomingMeta, {
-            title: candidate.title,
-            artist: candidate.artist,
-            duration: candidate.duration,
-            originalFilename: candidate.originalFilename,
-            musicbrainzRecordingId: candidate.musicbrainzRecordingId,
-            acoustidFingerprint: candidate.acoustidFingerprint,
-          });
-          if (result.score > bestScore) {
-            bestScore = result.score;
-            bestMatch = candidate;
-            bestResult = result;
-          }
-        }
-
-        if (bestScore >= 60 && bestMatch && bestResult) {
-          // Duplicate detected before compression, so only the temp upload needs cleaning up
-          try { await unlink(tempFilePath); } catch { /* ignore */ }
-          if (coverArtPath) {
-            try { await unlink(join(UPLOADS_BASE, coverArtPath)); } catch { /* ignore */ }
-          }
-
-          const { acoustidFingerprint: _fp, ...existingTrack } = bestMatch;
-          return reply.status(409).send({
-            duplicate: {
-              score: bestScore,
-              breakdown: bestResult.breakdown,
-              existingTrack,
-            },
-          });
-        }
-      }
-
-      // Compress audio to 192kbps MP3
-      const isAlreadyCompressedMp3 = data.mimetype === 'audio/mpeg' || data.mimetype === 'audio/mp3' || uploadExt === 'mp3';
-
-      if (isAlreadyCompressedMp3) {
-        // Check if MP3 is already low bitrate (skip compression if under 256kbps)
-        try {
-          const metadata = await parseFile(tempFilePath);
-          const bitrate = metadata.format.bitrate || 0;
-          if (bitrate <= 256000) {
-            // Already compressed enough, just move the file
-            const { rename } = await import('fs/promises');
-            await rename(tempFilePath, finalFilePath);
-          } else {
-            // Compress high bitrate MP3
-            await compressAudio(tempFilePath, finalFilePath);
-            await unlink(tempFilePath);
-          }
-        } catch {
-          // If we can't read bitrate, compress anyway
-          await compressAudio(tempFilePath, finalFilePath);
-          await unlink(tempFilePath);
-        }
-      } else {
-        // Compress non-MP3 formats
-        await compressAudio(tempFilePath, finalFilePath);
-        await unlink(tempFilePath);
-      }
-
-      // Get final file size for logging
-      const finalStats = await stat(finalFilePath);
-      console.log(`Track ${trackId} compressed: ${(finalStats.size / 1024 / 1024).toFixed(2)}MB`);
-
-      // Analyze audio for Radio mode (BPM, key, energy)
-      const analysis = await analyzeAudio(finalFilePath);
-      console.log(`Track ${trackId} analysis: BPM=${analysis.bpm}, Key=${analysis.key}, Energy=${analysis.energy}`);
-
-      // Store original filename without extension for duplicate detection
-      const originalFilename = data.filename.replace(/\.[^/.]+$/, '');
-
-      // Create track record
-      await db.insert(tracks).values({
-        id: trackId,
-        title,
-        artist,
-        album,
-        duration,
-        filePath: `audio/${finalFilename}`,
-        originalFilename,
-        coverArt: coverArtPath,
-        bpm: analysis.bpm,
-        key: analysis.key,
-        energy: analysis.energy,
+      const result = await ingestAudioFile({
+        sourcePath: tempFilePath,
+        originalFilename: data.filename.replace(/\.[^/.]+$/, ''),
         userId,
-        acoustidFingerprint: fpFingerprint,
-        acoustidId: fpAcoustidId,
-        musicbrainzRecordingId: fpMusicbrainzId,
+        // ?force=true skips duplicate detection once the admin has confirmed the override
+        force: (request.query as Record<string, string>)?.force === 'true',
       });
+
+      if (result.status === 'duplicate') {
+        return reply.status(409).send({ duplicate: result.duplicate });
+      }
 
       const track = await db.query.tracks.findFirst({
         columns: trackPublicColumns,
-        where: eq(tracks.id, trackId),
+        where: eq(tracks.id, result.trackId),
       });
 
       return reply.status(201).send(track);
     } catch (error) {
-      // Clean up temp file on error
-      try {
-        await unlink(tempFilePath);
-      } catch { /* ignore */ }
-      try {
-        await unlink(finalFilePath);
-      } catch { /* ignore */ }
-      if (coverArtPath) {
-        try { await unlink(join(UPLOADS_BASE, coverArtPath)); } catch { /* ignore */ }
-      }
-
+      await unlink(tempFilePath).catch(() => {});
       console.error('Track upload error:', error);
       return reply.status(500).send({ error: 'Failed to process audio file' });
     }

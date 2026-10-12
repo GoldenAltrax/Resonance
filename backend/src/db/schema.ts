@@ -95,6 +95,30 @@ export const inviteCodes = sqliteTable('invite_codes', {
   expiresAt: integer('expires_at', { mode: 'timestamp' }), // null = never expires
 });
 
+// Download queue for the "Add music" pipeline (services/downloader.ts)
+export const downloadJobs = sqliteTable('download_jobs', {
+  id: text('id').primaryKey(),
+  // queued -> searching -> downloading -> importing -> done | skipped | failed
+  status: text('status').notNull().default('queued'),
+  title: text('title').notNull(),
+  artist: text('artist'),
+  album: text('album'),
+  duration: integer('duration'), // expected length in seconds, used to pick the right YouTube upload
+  coverUrl: text('cover_url'),
+  sourceUrl: text('source_url'), // set when the request already points at a specific YouTube video
+  externalId: text('external_id'), // e.g. "itunes:617154366", "spotify:track:...", for de-duplicating requests
+  batchLabel: text('batch_label'), // album or playlist the request came from
+  playlistId: text('playlist_id').references(() => playlists.id, { onDelete: 'set null' }),
+  playlistPosition: integer('playlist_position'),
+  youtubeId: text('youtube_id'),
+  error: text('error'),
+  attempts: integer('attempts').notNull().default(0),
+  trackId: text('track_id').references(() => tracks.id, { onDelete: 'set null' }),
+  requestedBy: text('requested_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
+});
+
 // Type exports for use in the app
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -110,6 +134,7 @@ export type Favorite = typeof favorites.$inferSelect;
 export type NewFavorite = typeof favorites.$inferInsert;
 export type PlayHistory = typeof playHistory.$inferSelect;
 export type NewPlayHistory = typeof playHistory.$inferInsert;
+export type DownloadJob = typeof downloadJobs.$inferSelect;
 export type TrackSkip = typeof trackSkips.$inferSelect;
 export type NewTrackSkip = typeof trackSkips.$inferInsert;
 

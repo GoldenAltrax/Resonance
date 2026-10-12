@@ -24,7 +24,11 @@ RUN npm run build \
 FROM node:22-alpine
 
 # ffmpeg: transcoding/analysis, chromaprint: fpcalc fingerprints, tini: signal handling (graceful shutdown)
-RUN apk add --no-cache ffmpeg chromaprint tini
+# python3 + yt-dlp: "Add music" downloads. Installed with pip (not apk) so it is current and can be
+# upgraded in place from the app when YouTube changes something.
+RUN apk add --no-cache ffmpeg chromaprint tini python3 py3-pip \
+ && pip install --no-cache-dir --break-system-packages "yt-dlp[default]" \
+ && yt-dlp --version
 
 WORKDIR /app
 ENV NODE_ENV=production

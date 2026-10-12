@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, ChangeEvent, useMemo, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Upload, Play, Pause, Trash2, Search, Music2, X, CheckSquare, Square, Heart, ArrowUpDown, ChevronDown, Disc3 } from 'lucide-react';
+import { Upload, Play, Pause, Trash2, Search, Music2, X, CheckSquare, Square, Heart, ArrowUpDown, ChevronDown, Disc3, CirclePlus } from 'lucide-react';
 import { usePlaylistStore } from '@/stores/playlistStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -360,10 +360,17 @@ const LibraryView = () => {
           {isAdmin && <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
-            className="flex items-center gap-2 px-6 py-2.5 bg-white text-black rounded-xl font-medium hover:bg-zinc-200 transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-4 py-2.5 bg-zinc-900/50 border border-zinc-800 rounded-xl text-zinc-400 hover:text-white hover:bg-zinc-800/50 transition-colors disabled:opacity-50"
           >
             <Upload className="w-4 h-4" />
-            Import Tracks
+            <span className="text-sm">Upload files</span>
+          </button>}
+          {isAdmin && <button
+            onClick={() => navigate('add-music')}
+            className="flex items-center gap-2 px-6 py-2.5 bg-white text-black rounded-xl font-medium hover:bg-zinc-200 transition-colors"
+          >
+            <CirclePlus className="w-4 h-4" />
+            Add music
           </button>}
           <input
             type="file"

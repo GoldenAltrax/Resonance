@@ -40,6 +40,9 @@ services:
       - ADMIN_EMAIL=${ADMIN_EMAIL}
       - FRONTEND_URL=https://${RESONANCE_HOST:-minecraft.tail93f9bc.ts.net}
       - ACOUSTID_API_KEY=${ACOUSTID_API_KEY:-}
+      - DOWNLOAD_CONCURRENCY=${DOWNLOAD_CONCURRENCY:-2}
+      - ITUNES_COUNTRY=${ITUNES_COUNTRY:-US}
+      - YTDLP_ARGS=${YTDLP_ARGS:-}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
       interval: 30s
