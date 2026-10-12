@@ -1,15 +1,27 @@
-node_modules
-*/node_modules
+# Runtime data is bind-mounted into the container (docker-compose.prod.yml), never baked into the image
+uploads
+data
+backups
 backend/uploads
 backend/data
+.env
+.env.*
+!.env.example
+
+# Build output and dependencies are produced inside the image
+node_modules
+*/node_modules
 frontend/dist
 backend/dist
+
+# Repo metadata, archives, secrets
 .git
 .github
+graphify-out
 *.tar
 *.tar.gz
 resonance-backup*
-backups
+*.log
 *.key
 *.crt
 *.pem
