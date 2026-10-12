@@ -1,7 +1,18 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { api, User } from '@/services/api';
+import { api, HttpError, User } from '@/services/api';
 import { toast } from '@/stores/toastStore';
+import { usePlayerStore } from '@/stores/playerStore';
+import { useFavoritesStore } from '@/stores/favoritesStore';
+
+// Forget everything tied to the previous account: playback session, favorites, cached API data.
+// Without this the next person to sign in on the device inherits the old queue.
+function clearUserSession() {
+  usePlayerStore.getState().reset();
+  useFavoritesStore.getState().clearFavorites();
+  try { localStorage.removeItem('resonance-resume'); } catch { /* ignore */ }
+  navigator.serviceWorker?.controller?.postMessage({ type: 'CLEAR_API_CACHE' });
+}
 
 interface AuthState {
   user: User | null;
@@ -34,6 +45,7 @@ export const useAuthStore = create<AuthState>()(
       handleSessionExpired: () => {
         // Clear auth state and show message
         api.setToken(null);
+        clearUserSession();
         set({
           user: null,
           token: null,
@@ -97,6 +109,7 @@ export const useAuthStore = create<AuthState>()(
         } finally {
           api.setToken(null);
           api.setOnSessionExpired(null);
+          clearUserSession();
           set({
             user: null,
             token: null,
@@ -119,9 +132,16 @@ export const useAuthStore = create<AuthState>()(
         // Set up session expired callback for restored sessions
         api.setOnSessionExpired(() => get().handleSessionExpired());
         try {
-          const user = await api.getMe();
-          set({ user, isAuthenticated: true, sessionExpired: false });
-        } catch {
+          const { token: refreshed, ...user } = await api.getMe();
+          // Sliding session: the server re-issues a fresh token on every app start
+          if (refreshed) api.setToken(refreshed);
+          set({ user, token: refreshed ?? token, isAuthenticated: true, sessionExpired: false });
+        } catch (err) {
+          // Offline / server unreachable: keep the stored session so the app shell still works
+          if (!(err instanceof HttpError)) {
+            set({ isAuthenticated: true });
+            return;
+          }
           api.setToken(null);
           api.setOnSessionExpired(null);
           set({

@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { mkdir, unlink, writeFile } from 'fs/promises';
 import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { db, playlists, playlistTracks, tracks } from '../db/index.js';
+import { db, playlists, playlistTracks, tracks, trackPublicColumns } from '../db/index.js';
 import { eq, and, sql } from 'drizzle-orm';
 import { authMiddleware } from '../middleware/auth.js';
 
@@ -89,6 +89,7 @@ export async function playlistRoutes(app: FastifyInstance) {
     const trackIds = playlistTrackList.map(pt => pt.trackId);
     const trackList = trackIds.length > 0
       ? await db.query.tracks.findMany({
+          columns: trackPublicColumns,
           where: (tracks, { inArray }) => inArray(tracks.id, trackIds),
         })
       : [];
@@ -206,20 +207,21 @@ export async function playlistRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: 'Track not found' });
       }
 
-      // Get current max position
-      const existingTracks = await db.query.playlistTracks.findMany({
-        where: eq(playlistTracks.playlistId, id),
+      const alreadyAdded = await db.query.playlistTracks.findFirst({
+        where: and(eq(playlistTracks.playlistId, id), eq(playlistTracks.trackId, body.trackId)),
+        columns: { id: true },
       });
 
-      const maxPosition = existingTracks.reduce((max, pt) => Math.max(max, pt.position), 0);
+      if (alreadyAdded) {
+        return reply.status(409).send({ error: 'Track is already in this playlist' });
+      }
 
-      // Add track to playlist
-      await db.insert(playlistTracks).values({
-        id: uuidv4(),
-        playlistId: id,
-        trackId: body.trackId,
-        position: maxPosition + 1,
-      });
+      // Compute the next position inside the INSERT so concurrent adds can't collide
+      await db.run(sql`
+        INSERT INTO playlist_tracks (id, playlist_id, track_id, position, added_at)
+        SELECT ${uuidv4()}, ${id}, ${body.trackId}, COALESCE(MAX(position), 0) + 1, ${Math.floor(Date.now() / 1000)}
+        FROM playlist_tracks WHERE playlist_id = ${id}
+      `);
 
       return reply.status(201).send({ message: 'Track added to playlist' });
     } catch (error) {
@@ -331,7 +333,7 @@ export async function playlistRoutes(app: FastifyInstance) {
 
     // Generate unique filename with validated extension
     const ext = getSafeExtension(data.filename);
-    const filename = `playlist-${id}.${ext}`;
+    const filename = `playlist-${id}-${Date.now().toString(36)}.${ext}`; // versioned name: images are cached for 7 days
     const filePath = join(IMAGES_DIR, filename);
 
     // Delete old cover if exists (secure path resolution)

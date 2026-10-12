@@ -1,10 +1,13 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
 import { Track, UserPreferences, api } from '@/services/api';
+import { audioEngine } from '@/services/audioEngine';
+import { usePlaybackStore } from '@/stores/playbackStore';
 
 // Debounce for server preferences sync
 let _syncPrefTimeout: ReturnType<typeof setTimeout> | null = null;
 let _radioAutoStartedTimeout: ReturnType<typeof setTimeout> | null = null;
+let _sleepTimeout: ReturnType<typeof setTimeout> | null = null;
 
 const _syncPrefsToServer = (prefs: UserPreferences) => {
   if (_syncPrefTimeout) clearTimeout(_syncPrefTimeout);
@@ -30,79 +33,97 @@ const _extractPrefs = (s: PlayerState): UserPreferences => ({
   eqPreset: s.eqPreset,
 });
 
-// Debounce tracking for logPlay API calls
-let lastLoggedTrackId: string | null = null;
-let lastLoggedTime = 0;
-const LOG_DEBOUNCE_MS = 5000; // 5 seconds minimum between logs for same track
-
-const shouldLogPlay = (trackId: string): boolean => {
-  const now = Date.now();
-  if (trackId !== lastLoggedTrackId || now - lastLoggedTime > LOG_DEBOUNCE_MS) {
-    lastLoggedTrackId = trackId;
-    lastLoggedTime = now;
-    return true;
+// The persisted slice includes the whole queue, so writing it on every state change
+// (e.g. each step of a volume drag) is wasteful. Coalesce writes and flush on page hide.
+const pendingWrites = new Map<string, string>();
+let writeTimer: ReturnType<typeof setTimeout> | null = null;
+const flushWrites = () => {
+  if (writeTimer) clearTimeout(writeTimer);
+  writeTimer = null;
+  for (const [key, value] of pendingWrites) {
+    try { localStorage.setItem(key, value); } catch { /* quota or private mode */ }
   }
-  return false;
+  pendingWrites.clear();
+};
+window.addEventListener('pagehide', flushWrites);
+const debouncedStorage: StateStorage = {
+  getItem: (key) => {
+    try { return localStorage.getItem(key); } catch { return null; }
+  },
+  setItem: (key, value) => {
+    pendingWrites.set(key, value);
+    if (!writeTimer) writeTimer = setTimeout(flushWrites, 500);
+  },
+  removeItem: (key) => {
+    pendingWrites.delete(key);
+    try { localStorage.removeItem(key); } catch { /* ignore */ }
+  },
 };
 
+// Fisher–Yates; Array.sort(() => Math.random() - 0.5) is biased and unstable
+export function shuffleArray<T>(items: T[]): T[] {
+  const result = [...items];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j]!, result[i]!];
+  }
+  return result;
+}
+
+// Current track first, the rest shuffled. The queue itself is reordered, so the queue
+// panel always shows the real play order and the next track is known in advance
+// (needed for gapless preload and crossfade).
+function shuffledAround(queue: Track[], index: number): Track[] {
+  const current = queue[index];
+  if (!current) return shuffleArray(queue);
+  return [current, ...shuffleArray(queue.filter((_, i) => i !== index))];
+}
+
 interface PlayerState {
-  // Current track
   currentTrack: Track | null;
   queue: Track[];
   queueIndex: number;
+  /** Queue order before shuffle was turned on, restored when it is turned off. */
+  originalQueue: Track[] | null;
+  /** Increments whenever a (re)load of currentTrack is requested; the audio controller watches it. */
+  loadId: number;
+  /** True when the most recent track change was automatic (end of track), used for crossfade. */
+  autoAdvance: boolean;
 
-  // Playback state
   isPlaying: boolean;
   volume: number;
   isMuted: boolean;
-  progress: number;
-  duration: number;
   shuffle: boolean;
   repeat: 'none' | 'one' | 'all';
   showLyrics: boolean;
   showQueue: boolean;
 
-  // Crossfade
   crossfadeEnabled: boolean;
   crossfadeDuration: number; // seconds (0–12)
 
-  // Equalizer
   eqEnabled: boolean;
   eqGains: number[]; // 10 bands: 32,64,125,250,500,1k,2k,4k,8k,16k Hz — each -12 to +12 dB
-  eqPreset: string; // e.g. 'Flat', 'Bass Boost', ...
+  eqPreset: string;
   showEqualizer: boolean;
 
-  // Shuffle history — ordered list of queue indices played in the current shuffle cycle.
-  // Enables true no-repeat shuffle: pick only from unplayed indices until all are played.
-  shuffleHistory: number[];
-
-  // Radio mode - auto-queue similar tracks
   radioMode: boolean;
   radioSourceTrackId: string | null;
+  radioAutoStarted: boolean;
 
-  // Sleep timer
-  sleepTimerEnd: number | null; // Unix timestamp when timer expires
-  sleepTimerMinutes: number | null; // Original timer duration
+  sleepTimerEnd: number | null;
+  sleepTimerMinutes: number | null;
 
-  // Audio element reference (set from useAudioPlayer hook)
-  audioElement: HTMLAudioElement | null;
-
-  // True while Android blob fetch is in progress (src not yet set on audio element)
-  isLoadingAudio: boolean;
-
-  // Actions
-  setAudioElement: (element: HTMLAudioElement | null) => void;
-  setLoadingAudio: (loading: boolean) => void;
   play: (track?: Track, queue?: Track[]) => void;
+  playAt: (index: number) => void;
   pause: () => void;
   resume: () => void;
-  next: () => void;
+  togglePlay: () => void;
+  next: (opts?: { auto?: boolean }) => void;
   previous: () => void;
+  peekNext: () => Track | null;
   seek: (time: number) => void;
   setVolume: (volume: number) => void;
   toggleMute: () => void;
-  setProgress: (progress: number) => void;
-  setDuration: (duration: number) => void;
   toggleShuffle: () => void;
   toggleRepeat: () => void;
   toggleLyrics: () => void;
@@ -118,427 +139,376 @@ interface PlayerState {
   reorderQueue: (fromIndex: number, toIndex: number) => void;
   clearQueue: () => void;
   setSleepTimer: (minutes: number | null) => void;
-  checkSleepTimer: () => void;
-  // Radio mode
   startRadio: (track: Track, similarTracks: Track[]) => void;
   stopRadio: () => void;
-  // Smart auto-play notification (set briefly when radio auto-starts at queue end)
-  radioAutoStarted: boolean;
-  // Cross-device sync
   loadPreferences: (prefs: UserPreferences) => void;
+  /** Stop playback and forget the session (logout). */
+  reset: () => void;
 }
+
+const initialSession = {
+  currentTrack: null,
+  queue: [] as Track[],
+  queueIndex: -1,
+  originalQueue: null,
+  isPlaying: false,
+  radioMode: false,
+  radioSourceTrackId: null,
+  radioAutoStarted: false,
+  sleepTimerEnd: null,
+  sleepTimerMinutes: null,
+};
 
 export const usePlayerStore = create<PlayerState>()(
   persist(
-    (set, get) => ({
-      currentTrack: null,
-      queue: [],
-      queueIndex: -1,
-      isPlaying: false,
-      isLoadingAudio: false,
-      volume: 0.7,
-      isMuted: false,
-      progress: 0,
-      duration: 0,
-      shuffle: false,
-      repeat: 'none',
-      showLyrics: false,
-      showQueue: false,
-      crossfadeEnabled: false,
-      crossfadeDuration: 3,
-      eqEnabled: false,
-      eqGains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-      eqPreset: 'Flat',
-      showEqualizer: false,
-      shuffleHistory: [],
-      radioMode: false,
-      radioSourceTrackId: null,
-      radioAutoStarted: false,
-      sleepTimerEnd: null,
-      sleepTimerMinutes: null,
-      audioElement: null,
+    (set, get) => {
+      const goTo = (index: number, queue: Track[], auto = false, playNow = true) => {
+        const track = queue[index];
+        if (!track) return;
+        set((s) => ({
+          currentTrack: track,
+          queueIndex: index,
+          isPlaying: playNow,
+          autoAdvance: auto,
+          loadId: s.loadId + 1,
+        }));
+      };
 
-      setLoadingAudio: (loading) => set({ isLoadingAudio: loading }),
+      const autoStartRadio = (track: Track) => {
+        api.getSimilarTracks(track.id, { limit: 30 })
+          .then(({ similarTracks }) => {
+            // Bail out if the user started something else while we were fetching
+            if (get().currentTrack?.id !== track.id || similarTracks.length === 0) {
+              if (get().currentTrack?.id === track.id) set({ isPlaying: false });
+              return;
+            }
+            const { queue } = get();
+            set({
+              queue: [...queue, ...similarTracks],
+              originalQueue: null,
+              shuffle: false,
+              radioMode: true,
+              radioSourceTrackId: track.id,
+              radioAutoStarted: true,
+            });
+            goTo(queue.length, get().queue, true);
+            if (_radioAutoStartedTimeout) clearTimeout(_radioAutoStartedTimeout);
+            _radioAutoStartedTimeout = setTimeout(() => set({ radioAutoStarted: false }), 4000);
+          })
+          .catch(() => set({ isPlaying: false }));
+      };
 
-      setAudioElement: (element) => {
-        set({ audioElement: element });
-        // Apply persisted settings to the new audio element
-        const { volume, isMuted } = get();
-        if (element) {
-          element.volume = isMuted ? 0 : volume;
-        }
-      },
+      return {
+        ...initialSession,
+        loadId: 0,
+        autoAdvance: false,
+        volume: 0.7,
+        isMuted: false,
+        shuffle: false,
+        repeat: 'none',
+        showLyrics: false,
+        showQueue: false,
+        crossfadeEnabled: false,
+        crossfadeDuration: 3,
+        eqEnabled: false,
+        eqGains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        eqPreset: 'Flat',
+        showEqualizer: false,
 
-  play: (track, queue) => {
-    const state = get();
+        play: (track, queue) => {
+          if (!track) {
+            if (get().currentTrack) set({ isPlaying: true });
+            return;
+          }
+          const source = queue && queue.length > 0 ? queue : [track];
+          let index = source.findIndex((t) => t.id === track.id);
+          let playQueue = source;
+          if (index === -1) {
+            playQueue = [track, ...source];
+            index = 0;
+          }
+          if (get().shuffle) {
+            set({ originalQueue: playQueue });
+            playQueue = shuffledAround(playQueue, index);
+            index = 0;
+          } else {
+            set({ originalQueue: null });
+          }
+          set({ queue: playQueue, radioMode: false, radioSourceTrackId: null });
+          goTo(index, playQueue);
+        },
 
-    if (track) {
-      // If a specific track is provided, play it
-      let newQueue = queue || [track];
-      let newIndex = queue ? queue.findIndex((t) => t.id === track.id) : 0;
+        playAt: (index) => goTo(index, get().queue),
 
-      if (newIndex === -1) newIndex = 0;
+        pause: () => set({ isPlaying: false }),
 
-      // Log play to history (debounced to prevent rapid duplicate logs)
-      if (shouldLogPlay(track.id)) {
-        api.logPlay(track.id).catch(() => {
-          // Silently ignore errors
-        });
-      }
+        resume: () => {
+          if (get().currentTrack) set({ isPlaying: true });
+        },
 
-      set({
-        currentTrack: track,
-        queue: newQueue,
-        queueIndex: newIndex,
-        isPlaying: true,
-        shuffleHistory: [],
-      });
-    } else if (state.currentTrack) {
-      // Resume current track
-      set({ isPlaying: true });
-    }
-  },
+        togglePlay: () => {
+          const { isPlaying, currentTrack } = get();
+          if (currentTrack) set({ isPlaying: !isPlaying });
+        },
 
-  pause: () => set({ isPlaying: false }),
+        peekNext: () => {
+          const { queue, queueIndex, repeat } = get();
+          if (queueIndex + 1 < queue.length) return queue[queueIndex + 1] ?? null;
+          if (repeat === 'all') return queue[0] ?? null;
+          return null;
+        },
 
-  resume: () => {
-    const { currentTrack } = get();
-    if (currentTrack) {
-      set({ isPlaying: true });
-    }
-  },
+        next: (opts) => {
+          const auto = opts?.auto ?? false;
+          const { queue, queueIndex, repeat, currentTrack, radioMode } = get();
+          if (queue.length === 0) return;
 
-  next: () => {
-    const { queue, queueIndex, shuffle, repeat, currentTrack, progress, duration, radioMode, shuffleHistory } = get();
-    if (queue.length === 0) return;
+          // Record early manual skips (<30%) to down-rank tracks in Radio
+          if (!auto && currentTrack) {
+            const { progress, duration } = usePlaybackStore.getState();
+            if (duration > 0 && progress / duration < 0.3) {
+              api.logSkip(currentTrack.id, Math.round((progress / duration) * 100)).catch(() => {});
+            }
+          }
 
-    // C5: Skip logging — if <30% through the track, record the skip
-    if (currentTrack && duration > 0 && progress / duration < 0.30) {
-      const skipPosition = Math.round((progress / duration) * 100);
-      api.logSkip(currentTrack.id, skipPosition).catch(() => {});
-    }
-
-    let nextIndex: number;
-
-    if (shuffle) {
-      // Mark current track as played
-      const newHistory = shuffleHistory.includes(queueIndex)
-        ? shuffleHistory
-        : [...shuffleHistory, queueIndex];
-
-      // Tracks not yet played this cycle
-      const available = queue.map((_, i) => i).filter((i) => !newHistory.includes(i));
-
-      if (available.length === 0) {
-        // Full cycle complete
-        if (repeat === 'all') {
-          // Start a new cycle — reset history, pick any track except current
-          const fresh = queue.map((_, i) => i).filter((i) => i !== queueIndex);
-          nextIndex = fresh.length > 0
-            ? fresh[Math.floor(Math.random() * fresh.length)]!
-            : queueIndex;
-          set({ shuffleHistory: [] });
-        } else {
-          // Cycle done, no repeat — trigger radio or stop
-          set({ shuffleHistory: newHistory });
-          if (currentTrack && !radioMode) {
-            api.getSimilarTracks(currentTrack.id, { limit: 30 }).then(({ similarTracks }) => {
-              if (similarTracks.length > 0) {
-                get().startRadio(currentTrack, similarTracks);
-                if (_radioAutoStartedTimeout) clearTimeout(_radioAutoStartedTimeout);
-                set({ radioAutoStarted: true });
-                _radioAutoStartedTimeout = setTimeout(() => set({ radioAutoStarted: false }), 4000);
-              } else {
-                set({ isPlaying: false });
-              }
-            }).catch(() => { set({ isPlaying: false }); });
+          if (queueIndex + 1 < queue.length) {
+            goTo(queueIndex + 1, queue, auto);
+          } else if (repeat === 'all') {
+            goTo(0, queue, auto);
+          } else if (currentTrack && !radioMode) {
+            // End of queue: continue with similar tracks instead of stopping
+            autoStartRadio(currentTrack);
           } else {
             set({ isPlaying: false });
           }
-          return;
-        }
-      } else {
-        nextIndex = available[Math.floor(Math.random() * available.length)]!;
-        set({ shuffleHistory: newHistory });
-      }
-    } else {
-      nextIndex = queueIndex + 1;
+        },
 
-      if (nextIndex >= queue.length) {
-        if (repeat === 'all') {
-          nextIndex = 0;
-        } else {
-          // C4: Smart auto-play — start radio from current track instead of stopping
-          if (currentTrack && !radioMode) {
-            api.getSimilarTracks(currentTrack.id, { limit: 30 }).then(({ similarTracks }) => {
-              if (similarTracks.length > 0) {
-                get().startRadio(currentTrack, similarTracks);
-                if (_radioAutoStartedTimeout) clearTimeout(_radioAutoStartedTimeout);
-                set({ radioAutoStarted: true });
-                _radioAutoStartedTimeout = setTimeout(() => set({ radioAutoStarted: false }), 4000);
-              } else {
-                set({ isPlaying: false });
-              }
-            }).catch(() => {
-              set({ isPlaying: false });
+        previous: () => {
+          const { queue, queueIndex, repeat } = get();
+          if (queue.length === 0) return;
+
+          // More than 3 seconds in: restart the current track
+          if (usePlaybackStore.getState().progress > 3) {
+            get().seek(0);
+            return;
+          }
+
+          if (queueIndex > 0) {
+            goTo(queueIndex - 1, queue);
+          } else if (repeat === 'all') {
+            goTo(queue.length - 1, queue);
+          } else {
+            get().seek(0);
+          }
+        },
+
+        seek: (time) => {
+          audioEngine.seek(time);
+          usePlaybackStore.getState().setProgress(time);
+        },
+
+        setVolume: (volume) => {
+          set({ volume, isMuted: volume === 0 });
+          _syncPrefsToServer(_extractPrefs(get()));
+        },
+
+        toggleMute: () => {
+          set((s) => ({ isMuted: !s.isMuted }));
+          _syncPrefsToServer(_extractPrefs(get()));
+        },
+
+        toggleShuffle: () => {
+          const { shuffle, queue, queueIndex, originalQueue, currentTrack } = get();
+          if (!shuffle) {
+            set({
+              shuffle: true,
+              originalQueue: queue,
+              queue: shuffledAround(queue, queueIndex),
+              queueIndex: queue.length > 0 ? 0 : -1,
             });
           } else {
-            set({ isPlaying: false });
+            // Restore the original order, keeping tracks added while shuffled
+            let restored = queue;
+            if (originalQueue) {
+              const present = new Set(queue.map((t) => t.id));
+              const kept = originalQueue.filter((t) => present.has(t.id));
+              const keptIds = new Set(kept.map((t) => t.id));
+              restored = [...kept, ...queue.filter((t) => !keptIds.has(t.id))];
+            }
+            const index = currentTrack ? restored.findIndex((t) => t.id === currentTrack.id) : -1;
+            set({ shuffle: false, originalQueue: null, queue: restored, queueIndex: index });
           }
-          return;
-        }
-      }
-    }
+          _syncPrefsToServer(_extractPrefs(get()));
+        },
 
-    const nextTrack = queue[nextIndex];
-    if (nextTrack) {
-      set({
-        currentTrack: nextTrack,
-        queueIndex: nextIndex,
-        progress: 0,
-      });
-    }
-  },
+        toggleLyrics: () => set((s) => ({ showLyrics: !s.showLyrics, showQueue: false })),
 
-  previous: () => {
-    const { queue, queueIndex, progress, shuffle, shuffleHistory } = get();
-    if (queue.length === 0) return;
+        toggleQueue: () => set((s) => ({ showQueue: !s.showQueue, showLyrics: false })),
 
-    // If more than 3 seconds in, restart track
-    if (progress > 3) {
-      set({ progress: 0 });
-      const { audioElement } = get();
-      if (audioElement) audioElement.currentTime = 0;
-      return;
-    }
+        setCrossfade: (enabled, duration) => {
+          set((s) => ({
+            crossfadeEnabled: enabled,
+            crossfadeDuration: duration ?? s.crossfadeDuration,
+          }));
+          _syncPrefsToServer(_extractPrefs(get()));
+        },
 
-    if (shuffle && shuffleHistory.length > 0) {
-      // Go back to the last track played in shuffle history
-      const newHistory = [...shuffleHistory];
-      const prevIndex = newHistory.pop()!;
-      const prevTrack = queue[prevIndex];
-      if (prevTrack) {
-        set({ currentTrack: prevTrack, queueIndex: prevIndex, progress: 0, shuffleHistory: newHistory });
-      }
-      return;
-    }
+        setEqGain: (bandIndex, gain) => {
+          set((s) => {
+            const eqGains = [...s.eqGains];
+            eqGains[bandIndex] = gain;
+            return { eqGains, eqPreset: 'Custom' };
+          });
+          _syncPrefsToServer(_extractPrefs(get()));
+        },
 
-    // Non-shuffle: go to previous in queue order
-    let prevIndex = queueIndex - 1;
-    if (prevIndex < 0) prevIndex = queue.length - 1;
+        setEqPreset: (preset, gains) => {
+          set({ eqPreset: preset, eqGains: gains });
+          _syncPrefsToServer(_extractPrefs(get()));
+        },
 
-    const prevTrack = queue[prevIndex];
-    if (prevTrack) {
-      set({ currentTrack: prevTrack, queueIndex: prevIndex, progress: 0 });
-    }
-  },
+        toggleEq: () => {
+          set((s) => ({ eqEnabled: !s.eqEnabled }));
+          _syncPrefsToServer(_extractPrefs(get()));
+        },
 
-  seek: (time) => {
-    set({ progress: time });
-    const { audioElement } = get();
-    if (audioElement) {
-      audioElement.currentTime = time;
-    }
-  },
+        toggleEqualizer: () => set((s) => ({ showEqualizer: !s.showEqualizer })),
 
-  setVolume: (volume) => {
-        set({ volume, isMuted: volume === 0 });
-        const { audioElement } = get();
-        if (audioElement) {
-          audioElement.volume = volume;
-        }
-        _syncPrefsToServer(_extractPrefs(get()));
-      },
+        toggleRepeat: () => {
+          set((s) => ({
+            repeat: s.repeat === 'none' ? 'all' : s.repeat === 'all' ? 'one' : 'none',
+          }));
+          _syncPrefsToServer(_extractPrefs(get()));
+        },
 
-      toggleMute: () => {
-        const { isMuted, volume, audioElement } = get();
-        const newMuted = !isMuted;
-        set({ isMuted: newMuted });
-        if (audioElement) {
-          audioElement.volume = newMuted ? 0 : volume;
-        }
-        _syncPrefsToServer(_extractPrefs(get()));
-      },
+        addToQueue: (tracks) =>
+          set((s) => ({
+            queue: [...s.queue, ...tracks],
+            originalQueue: s.originalQueue ? [...s.originalQueue, ...tracks] : null,
+          })),
 
-      setProgress: (progress) => set({ progress }),
-
-  setDuration: (duration) => set({ duration }),
-
-  toggleShuffle: () => {
-        set((state) => ({ shuffle: !state.shuffle, shuffleHistory: [] }));
-        _syncPrefsToServer(_extractPrefs(get()));
-      },
-
-  toggleLyrics: () => set((state) => ({ showLyrics: !state.showLyrics, showQueue: false })),
-
-      toggleQueue: () => set((state) => ({ showQueue: !state.showQueue, showLyrics: false })),
-
-      setCrossfade: (enabled, duration) => {
-        set((state) => ({
-          crossfadeEnabled: enabled,
-          crossfadeDuration: duration ?? state.crossfadeDuration,
-        }));
-        _syncPrefsToServer(_extractPrefs(get()));
-      },
-
-      setEqGain: (bandIndex, gain) => {
-        set((state) => {
-          const eqGains = [...state.eqGains];
-          eqGains[bandIndex] = gain;
-          return { eqGains };
-        });
-        _syncPrefsToServer(_extractPrefs(get()));
-      },
-
-      setEqPreset: (preset, gains) => {
-        set({ eqPreset: preset, eqGains: gains });
-        _syncPrefsToServer(_extractPrefs(get()));
-      },
-
-      toggleEq: () => {
-        set((state) => ({ eqEnabled: !state.eqEnabled }));
-        _syncPrefsToServer(_extractPrefs(get()));
-      },
-
-      toggleEqualizer: () => set((state) => ({ showEqualizer: !state.showEqualizer })),
-
-      toggleRepeat: () => {
-        set((state) => ({
-          repeat:
-            state.repeat === 'none'
-              ? 'all'
-              : state.repeat === 'all'
-              ? 'one'
-              : 'none',
-        }));
-        _syncPrefsToServer(_extractPrefs(get()));
-      },
-
-      addToQueue: (tracks) =>
-        set((state) => ({
-          queue: [...state.queue, ...tracks],
-        })),
-
-      playNext: (track) =>
-        set((state) => {
-          const newQueue = [...state.queue];
-          // Insert after current track
-          newQueue.splice(state.queueIndex + 1, 0, track);
-          return { queue: newQueue };
-        }),
-
-      removeFromQueue: (index) =>
-        set((state) => {
-          if (index <= state.queueIndex) {
-            // If removing before or at current, adjust index
+        playNext: (track) =>
+          set((s) => {
+            const queue = [...s.queue];
+            queue.splice(s.queueIndex + 1, 0, track);
             return {
-              queue: state.queue.filter((_, i) => i !== index),
-              queueIndex: index < state.queueIndex ? state.queueIndex - 1 : state.queueIndex,
+              queue,
+              originalQueue: s.originalQueue ? [...s.originalQueue, track] : null,
             };
+          }),
+
+        removeFromQueue: (index) => {
+          const { queue, queueIndex, isPlaying } = get();
+          if (index < 0 || index >= queue.length) return;
+          const newQueue = queue.filter((_, i) => i !== index);
+
+          if (index < queueIndex) {
+            set({ queue: newQueue, queueIndex: queueIndex - 1 });
+          } else if (index > queueIndex) {
+            set({ queue: newQueue });
+          } else if (newQueue.length === 0) {
+            // Removed the only (current) track
+            audioEngine.reset();
+            set({ queue: [], queueIndex: -1, currentTrack: null, isPlaying: false, originalQueue: null });
+          } else {
+            // Removed the current track: move on to whatever now sits at this index
+            const nextIndex = Math.min(index, newQueue.length - 1);
+            set({ queue: newQueue });
+            goTo(nextIndex, newQueue, false, isPlaying);
           }
-          return {
-            queue: state.queue.filter((_, i) => i !== index),
-          };
-        }),
+        },
 
-      reorderQueue: (fromIndex, toIndex) =>
-        set((state) => {
-          const newQueue = [...state.queue];
-          const [removed] = newQueue.splice(fromIndex, 1);
-          if (removed) {
-            newQueue.splice(toIndex, 0, removed);
+        reorderQueue: (fromIndex, toIndex) =>
+          set((s) => {
+            const queue = [...s.queue];
+            const [removed] = queue.splice(fromIndex, 1);
+            if (removed) queue.splice(toIndex, 0, removed);
+
+            let queueIndex = s.queueIndex;
+            if (fromIndex === s.queueIndex) {
+              queueIndex = toIndex;
+            } else if (fromIndex < s.queueIndex && toIndex >= s.queueIndex) {
+              queueIndex--;
+            } else if (fromIndex > s.queueIndex && toIndex <= s.queueIndex) {
+              queueIndex++;
+            }
+            return { queue, queueIndex };
+          }),
+
+        clearQueue: () =>
+          set((s) => ({
+            queue: s.currentTrack ? [s.currentTrack] : [],
+            queueIndex: s.currentTrack ? 0 : -1,
+            originalQueue: null,
+            radioMode: false,
+            radioSourceTrackId: null,
+          })),
+
+        setSleepTimer: (minutes) => {
+          if (_sleepTimeout) clearTimeout(_sleepTimeout);
+          _sleepTimeout = null;
+          if (minutes === null) {
+            set({ sleepTimerEnd: null, sleepTimerMinutes: null });
+            return;
           }
+          const ms = minutes * 60 * 1000;
+          set({ sleepTimerEnd: Date.now() + ms, sleepTimerMinutes: minutes });
+          _sleepTimeout = setTimeout(() => {
+            _sleepTimeout = null;
+            set({ isPlaying: false, sleepTimerEnd: null, sleepTimerMinutes: null });
+          }, ms);
+        },
 
-          // Adjust queueIndex if needed
-          let newQueueIndex = state.queueIndex;
-          if (fromIndex === state.queueIndex) {
-            newQueueIndex = toIndex;
-          } else if (fromIndex < state.queueIndex && toIndex >= state.queueIndex) {
-            newQueueIndex--;
-          } else if (fromIndex > state.queueIndex && toIndex <= state.queueIndex) {
-            newQueueIndex++;
+        startRadio: (track, similarTracks) => {
+          const queue = [track, ...similarTracks];
+          set({
+            queue,
+            originalQueue: null,
+            radioMode: true,
+            radioSourceTrackId: track.id,
+            shuffle: false,
+          });
+          if (get().currentTrack?.id === track.id) {
+            // Keep playing the current track; just replace what comes after it
+            set({ queueIndex: 0 });
+          } else {
+            goTo(0, queue);
           }
+        },
 
-          return { queue: newQueue, queueIndex: newQueueIndex };
-        }),
+        stopRadio: () => set({ radioMode: false, radioSourceTrackId: null }),
 
-      clearQueue: () =>
-        set((state) => ({
-          queue: state.currentTrack ? [state.currentTrack] : [],
-          queueIndex: state.currentTrack ? 0 : -1,
-          radioMode: false,
-          radioSourceTrackId: null,
-          shuffleHistory: [],
-        })),
+        loadPreferences: (prefs) => {
+          const updates: Partial<PlayerState> = {};
+          if (prefs.volume !== undefined) updates.volume = prefs.volume;
+          if (prefs.isMuted !== undefined) updates.isMuted = prefs.isMuted;
+          if (prefs.repeat !== undefined) updates.repeat = prefs.repeat;
+          if (prefs.crossfadeEnabled !== undefined) updates.crossfadeEnabled = prefs.crossfadeEnabled;
+          if (prefs.crossfadeDuration !== undefined) updates.crossfadeDuration = prefs.crossfadeDuration;
+          if (prefs.eqEnabled !== undefined) updates.eqEnabled = prefs.eqEnabled;
+          if (prefs.eqGains !== undefined) updates.eqGains = prefs.eqGains;
+          if (prefs.eqPreset !== undefined) updates.eqPreset = prefs.eqPreset;
+          // Shuffle is not applied from the server: it reorders the local queue,
+          // which another device's preference shouldn't do silently.
+          set(updates);
+        },
 
-      setSleepTimer: (minutes) => {
-        if (minutes === null) {
-          set({ sleepTimerEnd: null, sleepTimerMinutes: null });
-        } else {
-          const endTime = Date.now() + minutes * 60 * 1000;
-          set({ sleepTimerEnd: endTime, sleepTimerMinutes: minutes });
-        }
-      },
-
-      checkSleepTimer: () => {
-        const { sleepTimerEnd, isPlaying } = get();
-        if (sleepTimerEnd && isPlaying && Date.now() >= sleepTimerEnd) {
-          set({ isPlaying: false, sleepTimerEnd: null, sleepTimerMinutes: null });
-        }
-      },
-
-      startRadio: (track, similarTracks) => {
-        // Start radio mode with the source track and similar tracks as queue
-        const queue = [track, ...similarTracks];
-        set({
-          currentTrack: track,
-          queue,
-          queueIndex: 0,
-          isPlaying: true,
-          radioMode: true,
-          radioSourceTrackId: track.id,
-          shuffle: false, // Disable shuffle in radio mode
-          shuffleHistory: [],
-        });
-
-        // Log play to history
-        if (shouldLogPlay(track.id)) {
-          api.logPlay(track.id).catch(() => {});
-        }
-      },
-
-      stopRadio: () => {
-        set({
-          radioMode: false,
-          radioSourceTrackId: null,
-        });
-      },
-
-      loadPreferences: (prefs) => {
-        const updates: Partial<PlayerState> = {};
-        if (prefs.volume !== undefined) updates.volume = prefs.volume;
-        if (prefs.isMuted !== undefined) updates.isMuted = prefs.isMuted;
-        if (prefs.shuffle !== undefined) updates.shuffle = prefs.shuffle;
-        if (prefs.repeat !== undefined) updates.repeat = prefs.repeat;
-        if (prefs.crossfadeEnabled !== undefined) updates.crossfadeEnabled = prefs.crossfadeEnabled;
-        if (prefs.crossfadeDuration !== undefined) updates.crossfadeDuration = prefs.crossfadeDuration;
-        if (prefs.eqEnabled !== undefined) updates.eqEnabled = prefs.eqEnabled;
-        if (prefs.eqGains !== undefined) updates.eqGains = prefs.eqGains;
-        if (prefs.eqPreset !== undefined) updates.eqPreset = prefs.eqPreset;
-        set(updates);
-        // Apply volume to existing audio element
-        const { audioElement } = get();
-        const vol = updates.volume ?? get().volume;
-        const muted = updates.isMuted ?? get().isMuted;
-        if (audioElement) {
-          audioElement.volume = muted ? 0 : vol;
-        }
-      },
-    }),
+        reset: () => {
+          if (_sleepTimeout) clearTimeout(_sleepTimeout);
+          _sleepTimeout = null;
+          audioEngine.reset();
+          usePlaybackStore.setState({ progress: 0, duration: 0, isBuffering: false });
+          set((s) => ({ ...initialSession, loadId: s.loadId + 1, showLyrics: false, showQueue: false }));
+        },
+      };
+    },
     {
       name: 'resonance-player-settings',
+      storage: createJSONStorage(() => debouncedStorage),
+      version: 2,
+      // v1 persisted shuffleHistory and no originalQueue; dropping unknown keys is enough
+      migrate: (persisted) => persisted as PlayerState,
       partialize: (state) => ({
-        // Audio preferences
         volume: state.volume,
         isMuted: state.isMuted,
         shuffle: state.shuffle,
@@ -552,6 +522,7 @@ export const usePlayerStore = create<PlayerState>()(
         currentTrack: state.currentTrack,
         queue: state.queue,
         queueIndex: state.queueIndex,
+        originalQueue: state.originalQueue,
       }),
     }
   )

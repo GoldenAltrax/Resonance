@@ -26,6 +26,8 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
   _pingInterval: null,
 
   startMonitoring() {
+    // Idempotent: React StrictMode mounts effects twice in development
+    if (get()._pingInterval !== null) return;
     const handleOnline = () => {
       set({ isOnline: true });
       pingServer().then((ok) => set({ isServerReachable: ok }));
@@ -40,6 +42,8 @@ export const useNetworkStore = create<NetworkState>((set, get) => ({
 
     // Periodic ping
     const interval = setInterval(async () => {
+      // Don't wake the radio/CPU for pings while the tab is in the background
+      if (document.visibilityState === 'hidden') return;
       if (!navigator.onLine) {
         set({ isOnline: false, isServerReachable: false });
         return;

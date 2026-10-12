@@ -201,12 +201,17 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'User not found' });
     }
 
+    // Sliding session: every app start re-issues a fresh 7-day token, so active users
+    // are never logged out mid-week.
+    const token = app.jwt.sign({ userId: user.id, username: user.username }, { expiresIn: '7d' });
+
     return reply.send({
       id: user.id,
       username: user.username,
       email: user.email,
       profileImage: user.profileImage,
       isAdmin: isAdmin(user.username, user.email),
+      token,
     });
   });
 

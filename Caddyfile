@@ -1,29 +1,38 @@
-# Caddyfile — works with Tailscale HTTPS (no public domain needed)
-# Replace YOUR_TAILSCALE_HOSTNAME with output of: tailscale cert --domain
-# e.g. your-vm.tail-xxxx.ts.net
-# OR replace with your domain if you get one later.
+# Resonance reverse proxy.
+#
+# HTTPS is required: service workers (offline support, "Install app") only run in a
+# secure context. Caddy obtains a certificate for *.ts.net names from the local tailscaled
+# automatically; docker-compose.prod.yml mounts the tailscaled socket for that.
+# Run `sudo tailscale cert <host>` once on the server if it hasn't been done before.
+#
+# Set RESONANCE_HOST in .env (e.g. your-vm.tailXXXX.ts.net), or replace it with a public
+# domain to get a Let's Encrypt certificate instead.
 
-{
-    # Use Tailscale cert provisioner
-    # Remove this block if using a public domain (Caddy auto-provisions Let's Encrypt)
-}
-
-http://ubuntu-minecraft-vm.tail1d6ee2.ts.net {
-    # Reverse proxy to Resonance app container
+{$RESONANCE_HOST:ubuntu-minecraft-vm.tail1d6ee2.ts.net} {
     reverse_proxy resonance:3000
 
-    # Compression
-    encode gzip zstd
+    # Compress text responses only; audio is already compressed and must keep Range support
+    encode {
+        gzip
+        zstd
+        match {
+            header Content-Type text/*
+            header Content-Type application/json*
+            header Content-Type application/javascript*
+            header Content-Type image/svg+xml*
+        }
+    }
 
-    # Security headers
     header {
         X-Content-Type-Options "nosniff"
         X-Frame-Options "SAMEORIGIN"
         Referrer-Policy "strict-origin-when-cross-origin"
+        Strict-Transport-Security "max-age=31536000"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
         -Server
     }
 
-    # Handle large audio file uploads
+    # Large audio uploads
     request_body {
         max_size 100MB
     }
@@ -32,6 +41,16 @@ http://ubuntu-minecraft-vm.tail1d6ee2.ts.net {
         output file /data/access.log {
             roll_size 10MB
             roll_keep 5
+        }
+        # Audio URLs carry the JWT as ?token= (media elements can't send headers): never log it
+        format filter {
+            fields {
+                request>uri query {
+                    replace token REDACTED
+                }
+                request>headers>Authorization delete
+            }
+            wrap json
         }
     }
 }

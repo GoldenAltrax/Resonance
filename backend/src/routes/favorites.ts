@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
-import { db } from '../db/index.js';
+import { db, trackPublicColumns } from '../db/index.js';
 import { favorites, tracks } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
 import { authMiddleware } from '../middleware/auth.js';
@@ -25,6 +25,7 @@ export async function favoriteRoutes(app: FastifyInstance) {
 
     // Get tracks data
     const favoriteTracks = await db.query.tracks.findMany({
+      columns: trackPublicColumns,
       where: (tracks, { inArray }) => inArray(tracks.id, trackIds),
     });
 
@@ -46,6 +47,7 @@ export async function favoriteRoutes(app: FastifyInstance) {
 
     const userFavorites = await db.query.favorites.findMany({
       where: eq(favorites.userId, userId),
+      columns: { trackId: true },
     });
 
     const trackIds = userFavorites.map(f => f.trackId);
@@ -66,26 +68,19 @@ export async function favoriteRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Track not found' });
     }
 
-    // Check if already favorited
-    const existing = await db.query.favorites.findFirst({
+    // Idempotent insert: the unique (user_id, track_id) index makes double-clicks harmless
+    const inserted = await db.insert(favorites)
+      .values({ id: uuidv4(), userId, trackId })
+      .onConflictDoNothing()
+      .returning();
+
+    const favorite = inserted[0] ?? await db.query.favorites.findFirst({
       where: and(eq(favorites.userId, userId), eq(favorites.trackId, trackId)),
     });
 
-    if (existing) {
-      return reply.status(200).send({ message: 'Track already in favorites', favorite: existing });
+    if (!inserted[0]) {
+      return reply.status(200).send(favorite);
     }
-
-    // Add to favorites
-    const favoriteId = uuidv4();
-    await db.insert(favorites).values({
-      id: favoriteId,
-      userId,
-      trackId,
-    });
-
-    const favorite = await db.query.favorites.findFirst({
-      where: eq(favorites.id, favoriteId),
-    });
 
     return reply.status(201).send(favorite);
   });

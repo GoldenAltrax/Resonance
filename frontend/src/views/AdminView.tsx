@@ -1,8 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { Users, Music, ListMusic, Ticket, Plus, Trash2, Copy, Check, X, RefreshCw, ToggleLeft, ToggleRight, Terminal, Fingerprint } from 'lucide-react';
+import { Users, Music, ListMusic, Ticket, Plus, Trash2, Copy, Check, X, RefreshCw, ToggleLeft, ToggleRight, Terminal, Fingerprint, Activity } from 'lucide-react';
 import { api, AdminStats, AdminUser, InviteCode } from '@/services/api';
 import { toast } from '@/stores/toastStore';
-import DebugPanel from '@/components/DebugPanel';
 
 const AdminView = () => {
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -18,6 +17,7 @@ const AdminView = () => {
   const [newCodeMaxUses, setNewCodeMaxUses] = useState<string>('');
   const [isCreating, setIsCreating] = useState(false);
   const [isFingerprintingAll, setIsFingerprintingAll] = useState(false);
+  const [isAnalyzingAll, setIsAnalyzingAll] = useState(false);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -91,12 +91,25 @@ const AdminView = () => {
   const handleFingerprintAll = async () => {
     setIsFingerprintingAll(true);
     try {
+      // Runs in the background on the server; the response only says how many were queued
       const result = await api.fingerprintAll();
-      toast.success(`Fingerprinting complete — ${result.processed}/${result.total} processed, ${result.failed} failed`);
+      toast.success(result.total ? `Fingerprinting started for ${result.total} tracks` : result.message);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Fingerprinting failed');
     } finally {
       setIsFingerprintingAll(false);
+    }
+  };
+
+  const handleAnalyzeAll = async () => {
+    setIsAnalyzingAll(true);
+    try {
+      const result = await api.analyzeAllTracks();
+      toast.success(result.total ? `Analysis started for ${result.total} tracks` : result.message);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Analysis failed');
+    } finally {
+      setIsAnalyzingAll(false);
     }
   };
 
@@ -148,7 +161,7 @@ const AdminView = () => {
             }`}
           >
             {tab === 'debug' && <Terminal className="w-3.5 h-3.5" />}
-            {tab === 'overview' ? 'Overview' : tab === 'users' ? 'Users' : tab === 'invites' ? 'Invite Codes' : 'Debug'}
+            {tab === 'overview' ? 'Overview' : tab === 'users' ? 'Users' : tab === 'invites' ? 'Invite Codes' : 'Maintenance'}
           </button>
         ))}
       </div>
@@ -378,7 +391,25 @@ const AdminView = () => {
               </button>
             </div>
           </div>
-          <DebugPanel />
+          <div className="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6">
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-white mb-1">Audio Analysis</h3>
+                <p className="text-sm text-zinc-500">
+                  Measure energy and read BPM/key tags for tracks that haven't been analyzed. Radio mode uses these to
+                  pick similar tracks.
+                </p>
+              </div>
+              <button
+                onClick={handleAnalyzeAll}
+                disabled={isAnalyzingAll}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed shrink-0 ml-6"
+              >
+                <Activity className={`w-4 h-4 ${isAnalyzingAll ? 'animate-pulse' : ''}`} />
+                {isAnalyzingAll ? 'Starting...' : 'Analyze Unprocessed Tracks'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

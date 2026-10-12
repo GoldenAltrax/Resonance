@@ -3,6 +3,64 @@ import { LogOut, Shield, User as UserIcon, ChevronRight, Camera, X, Loader2, Eye
 import { useAuthStore } from '@/stores/authStore';
 import { toast } from '@/stores/toastStore';
 import { api } from '@/services/api';
+import { usePlayerStore } from '@/stores/playerStore';
+import { audioEngine } from '@/services/audioEngine';
+import { navigate } from '@/utils/router';
+
+/** Crossfade preferences (synced to the server like other player settings). */
+const PlaybackSettings = () => {
+  const crossfadeEnabled = usePlayerStore((s) => s.crossfadeEnabled);
+  const crossfadeDuration = usePlayerStore((s) => s.crossfadeDuration);
+  const setCrossfade = usePlayerStore((s) => s.setCrossfade);
+  const supported = audioEngine.supportsWebAudio;
+
+  return (
+    <section className="bg-zinc-900/20 border border-zinc-800/50 rounded-3xl p-6 md:p-8 mb-8">
+      <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-widest mb-5">Playback</h3>
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-white font-medium">Crossfade</p>
+          <p className="text-zinc-500 text-sm">
+            {supported
+              ? 'Blend the end of each song into the next one.'
+              : 'Not available in this browser (iOS Safari). Tracks still play back to back without gaps.'}
+          </p>
+        </div>
+        <button
+          role="switch"
+          aria-checked={crossfadeEnabled}
+          aria-label="Crossfade"
+          disabled={!supported}
+          onClick={() => setCrossfade(!crossfadeEnabled)}
+          className={`relative inline-flex items-center w-11 h-6 rounded-full transition-colors flex-shrink-0 disabled:opacity-40 ${
+            crossfadeEnabled ? 'bg-white' : 'bg-zinc-700'
+          }`}
+        >
+          <span
+            className={`inline-block w-5 h-5 bg-black rounded-full shadow transition-transform ${
+              crossfadeEnabled ? 'translate-x-5' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
+      </div>
+      {crossfadeEnabled && supported && (
+        <div className="mt-5 flex items-center gap-4">
+          <input
+            type="range"
+            min={1}
+            max={12}
+            step={1}
+            value={crossfadeDuration}
+            onChange={(e) => setCrossfade(true, Number(e.target.value))}
+            aria-label="Crossfade duration in seconds"
+            className="range-slider flex-1"
+          />
+          <span className="text-sm text-zinc-400 tabular-nums w-10 text-right">{crossfadeDuration}s</span>
+        </div>
+      )}
+    </section>
+  );
+};
 import { validatePassword, getPasswordStrength, isPasswordValid } from '@/utils/password';
 
 const SettingsView = () => {
@@ -25,14 +83,10 @@ const SettingsView = () => {
     setShowLogoutConfirm(true);
   };
 
-  const logoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const handleLogoutConfirm = () => {
     setShowLogoutConfirm(false);
     setIsLoggingOut(true);
-    const { logout } = useAuthStore.getState();
-    if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
-    logoutTimerRef.current = setTimeout(() => logout(), 2000);
+    useAuthStore.getState().logout().finally(() => setIsLoggingOut(false));
   };
 
   const handleAvatarClick = () => {
@@ -123,7 +177,7 @@ const SettingsView = () => {
   const profileImageUrl = user?.profileImage
     ? user.profileImage.startsWith('http')
       ? user.profileImage
-      : api.getUploadUrl(user.profileImage, { bust: true })
+      : api.getUploadUrl(user.profileImage)
     : `https://api.dicebear.com/7.x/initials/svg?seed=${user?.username || 'User'}`;
 
   if (isLoggingOut) {
@@ -145,13 +199,25 @@ const SettingsView = () => {
         <h1 className="text-4xl font-semibold text-white tracking-tight">Settings</h1>
       </header>
 
+      <PlaybackSettings />
+
+      {user?.isAdmin && (
+        <button
+          onClick={() => navigate('admin')}
+          className="md:hidden w-full flex items-center justify-between bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-2xl px-6 py-4 mb-8"
+        >
+          <span className="flex items-center gap-3 font-medium"><Shield className="w-4 h-4" /> Admin Panel</span>
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      )}
+
       <section className="bg-zinc-900/20 border border-zinc-800/50 rounded-3xl overflow-hidden mb-8">
-        <div className="p-8 flex items-center gap-8">
+        <div className="p-6 md:p-8 flex flex-col sm:flex-row items-center gap-6 md:gap-8 text-center sm:text-left">
           <div className="relative group cursor-pointer" onClick={handleAvatarClick}>
             <div className="w-32 h-32 rounded-full overflow-hidden border-2 border-zinc-800 p-1">
               <img src={profileImageUrl} alt="Profile" loading="lazy" decoding="async" className="w-full h-full object-cover rounded-full" />
             </div>
-            <div className="absolute inset-0 bg-black/40 rounded-full opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40 rounded-full opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity flex items-center justify-center">
               {isLoading ? (
                 <Loader2 className="text-white w-6 h-6 animate-spin" />
               ) : (

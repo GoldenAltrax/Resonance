@@ -4,33 +4,18 @@ import type { AcousticDuplicate } from '@/types/index';
 // Use environment variable for API URL, fallback to relative path for dev proxy
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
-// Lazy import to avoid a circular dep — debugLog has no deps on api.
-function _dbg(level: 'info' | 'warn' | 'error', msg: string) {
-  import('@/utils/debugLog').then(({ dbg }) => dbg[level](msg)).catch(() => {});
-}
-
-// Detect Tauri environment synchronously
-const _isTauri = () => '__TAURI_INTERNALS__' in window;
-
-// Cache the platform string so the OS plugin is only queried once.
-// 'web' = not Tauri, 'android' = Android Tauri, 'macos'/'windows'/etc = desktop Tauri.
-let _platformCache: string | null = null;
-
-async function _getPlatform(): Promise<string> {
-  if (_platformCache !== null) return _platformCache;
-  if (!_isTauri()) return (_platformCache = 'web');
-  try {
-    const { platform } = await import('@tauri-apps/plugin-os');
-    _platformCache = await platform();
-  } catch {
-    _platformCache = 'unknown';
-  }
-  return _platformCache;
-}
-
-interface ApiError {
-  error: string;
+interface ApiErrorBody {
+  error?: string;
   details?: unknown;
+  [key: string]: unknown;
+}
+
+/** Error thrown for non-2xx responses; keeps the status and parsed body for callers that need them. */
+export class HttpError extends Error {
+  constructor(public readonly status: number, public readonly body: ApiErrorBody) {
+    super(body.error || 'Request failed');
+    this.name = 'HttpError';
+  }
 }
 
 class ApiClient {
@@ -74,13 +59,13 @@ class ApiClient {
         if (this.onSessionExpired) {
           this.onSessionExpired();
         }
-        throw new Error('Session expired. Please log in again.');
+        throw new HttpError(401, { error: 'Session expired. Please log in again.' });
       }
 
-      const error: ApiError = await response.json().catch(() => ({
+      const body: ApiErrorBody = await response.json().catch(() => ({
         error: 'An error occurred',
       }));
-      throw new Error(error.error || 'Request failed');
+      throw new HttpError(response.status, body);
     }
 
     // Handle 204 No Content
@@ -120,7 +105,7 @@ class ApiClient {
   }
 
   async getMe() {
-    return this.request<User>('/auth/me');
+    return this.request<User & { token?: string }>('/auth/me');
   }
 
   // Playlist endpoints
@@ -184,27 +169,14 @@ class ApiClient {
   async uploadTrack(file: File): Promise<Track> {
     const formData = new FormData();
     formData.append('file', file);
-
-    const headers: Record<string, string> = {};
-    if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
-
-    const response = await fetch(`${API_URL}/tracks`, {
-      method: 'POST',
-      headers,
-      body: formData,
-    });
-
-    if (response.status === 409) {
-      const data = await response.json() as { duplicate: AcousticDuplicate };
-      throw new DuplicateError(data.duplicate);
+    try {
+      return await this.request<Track>('/tracks', { method: 'POST', body: formData });
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 409 && err.body.duplicate) {
+        throw new DuplicateError(err.body.duplicate as AcousticDuplicate);
+      }
+      throw err;
     }
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'An error occurred' })) as { error: string };
-      throw new Error(error.error || 'Upload failed');
-    }
-
-    return response.json() as Promise<Track>;
   }
 
   async uploadTrackForce(file: File): Promise<Track> {
@@ -217,7 +189,7 @@ class ApiClient {
   }
 
   async fingerprintAll() {
-    return this.request<{ message: string; processed: number; failed: number; total: number }>(
+    return this.request<{ message: string; processed?: number; total: number }>(
       '/tracks/fingerprint-all',
       { method: 'POST' }
     );
@@ -236,78 +208,11 @@ class ApiClient {
     });
   }
 
-  // Returns an audio-playable URL for a track.
-  //
-  // Strategy per platform:
-  //   macOS/Windows/Linux (desktop Tauri) — custom stream:// URI scheme, proxied by Rust.
-  //     Bypasses WKWebView ATS restrictions; supports Range requests; zero memory overhead.
-  //   Android (Tauri) + Browser — fetch() + blob: URL.
-  //     Android WebView blocks <audio src="http://..."> as mixed content (HTTPS page → HTTP
-  //     audio). The stream:// custom protocol also doesn't work on Android because the
-  //     Android media player bypasses shouldInterceptRequest for custom URI schemes.
-  //     fetch() over HTTP is allowed (Tauri configures setMixedContentMode=ALWAYS_ALLOW
-  //     for XHR/fetch), so fetching to a local blob: URL is the reliable path.
-  async getSecureStreamUrl(id: string): Promise<string> {
-    if (!this.token) {
-      throw new Error('Not authenticated');
-    }
-
-    if (_isTauri()) {
-      const platform = await _getPlatform();
-
-      // Only use the stream:// Rust proxy on known desktop platforms where the WebView
-      // intercepts custom URI schemes for all resource types (including media elements).
-      if (platform === 'macos' || platform === 'windows' || platform === 'linux') {
-        // JWT tokens are Base64URL encoded — no percent-encoding needed.
-        return `stream://audio/${id}?token=${this.token}`;
-      }
-
-      // Android: if the API is served over HTTPS there is no mixed-content issue,
-      // so we can use a direct ?token= URL and skip the blob round-trip entirely.
-      if (platform === 'android' && API_URL.startsWith('https://')) {
-        const url = `${API_URL}/tracks/${id}/stream?token=${encodeURIComponent(this.token)}`;
-        _dbg('info', `android https direct url: ${url}`);
-        return url;
-      }
-
-      // Android HTTP or unrecognised platform: fall through to blob fetch below.
-    }
-
-    // Android Tauri (HTTP) + Browser: fetch with Authorization header, return local blob: URL.
-    const fetchUrl = `${API_URL}/tracks/${id}/stream`;
-    _dbg('info', `blob fetch: GET ${fetchUrl}`);
-    const response = await fetch(fetchUrl, {
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-      },
-    });
-
-    _dbg(response.ok ? 'info' : 'error', `blob fetch response: ${response.status} ${response.statusText}`);
-
-    if (!response.ok) {
-      if (response.status === 401 && this.onSessionExpired) {
-        this.onSessionExpired();
-      }
-      throw new Error('Failed to fetch audio stream');
-    }
-
-    const blob = await response.blob();
-    _dbg('info', `blob ready: size=${blob.size} type="${blob.type}"`);
-    return URL.createObjectURL(blob);
-  }
-
-  // Revoke a blob URL to free memory (no-op for stream:// URLs)
-  revokeStreamUrl(url: string) {
-    if (url.startsWith('blob:')) {
-      URL.revokeObjectURL(url);
-    }
-  }
-
-  // Legacy method for backwards compatibility (deprecated - use getSecureStreamUrl)
-  getTrackStreamUrl(id: string) {
-    // Include token as query param for HTML5 Audio element (can't send headers)
-    const tokenParam = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
-    return `${API_URL}/tracks/${id}/stream${tokenParam}`;
+  // Audio elements can't send an Authorization header, so the token goes in the query
+  // string. The server streams the file with Range support (seeking, progressive playback).
+  getStreamUrl(id: string): string {
+    const token = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
+    return `${API_URL}/tracks/${id}/stream${token}`;
   }
 
   async getSimilarTracks(id: string, options?: { limit?: number; excludeIds?: string; recentArtists?: string }) {
@@ -316,6 +221,12 @@ class ApiClient {
     if (options?.excludeIds) params.set('excludeIds', options.excludeIds);
     if (options?.recentArtists) params.set('recentArtists', options.recentArtists);
     return this.request<SimilarTracksResponse>(`/tracks/${id}/similar?${params.toString()}`);
+  }
+
+  async getEmbeddedLyrics(id: string) {
+    return this.request<{ lyrics: string | null; synced: { time: number; text: string }[] | null }>(
+      `/tracks/${id}/lyrics`
+    );
   }
 
   async logSkip(id: string, position: number) {
@@ -343,14 +254,12 @@ class ApiClient {
     return API_URL.replace(/\/api$/, '');
   }
 
-  // Returns the URL for any uploaded file (cover art, profile image, playlist cover).
+  // Returns the URL for an uploaded image (cover art, profile image, playlist cover).
+  // Images are public and UUID-named, so URLs are stable and cacheable (no token).
   // Pass { bust: true } to append a cache-busting timestamp (e.g. after upload).
   getUploadUrl(path: string, opts?: { bust?: boolean }): string {
-    const params = new URLSearchParams();
-    if (this.token) params.set('token', this.token);
-    if (opts?.bust) params.set('t', String(Date.now()));
-    const query = params.toString();
-    return `${this.uploadBase}/uploads/${path}${query ? `?${query}` : ''}`;
+    const query = opts?.bust ? `?t=${Date.now()}` : '';
+    return `${this.uploadBase}/uploads/${path}${query}`;
   }
 
   // Alias kept for callers that pass coverArt directly.

@@ -1,13 +1,11 @@
 import { useState, useRef, FormEvent } from 'react';
 import { Plus, X, Upload, MoreVertical, Play, Loader2, Edit2, Trash2, Image } from 'lucide-react';
 import { usePlaylistStore } from '@/stores/playlistStore';
-import { api, Playlist } from '@/services/api';
+import { Playlist } from '@/services/api';
+import { playlistCoverUrl } from '@/utils/cover';
+import { navigate } from '@/utils/router';
 
-interface PlaylistsViewProps {
-  onPlaylistClick: (id: string) => void;
-}
-
-const PlaylistsView = ({ onPlaylistClick }: PlaylistsViewProps) => {
+const PlaylistsView = () => {
   const { playlists, isLoading, createPlaylist, updatePlaylist, deletePlaylist, uploadPlaylistCover } = usePlaylistStore();
   const [showModal, setShowModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -148,14 +146,7 @@ const PlaylistsView = ({ onPlaylistClick }: PlaylistsViewProps) => {
   };
 
   // Resolve cover image URL with cache-busting for local images
-  const getCoverUrl = (playlist: Playlist) => {
-    if (playlist.coverImage) {
-      return playlist.coverImage.startsWith('http')
-        ? playlist.coverImage
-        : api.getUploadUrl(playlist.coverImage, { bust: true });
-    }
-    return `https://picsum.photos/seed/${playlist.id}/400/400`;
-  };
+  const getCoverUrl = (playlist: Playlist) => playlistCoverUrl(playlist);
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -187,7 +178,7 @@ const PlaylistsView = ({ onPlaylistClick }: PlaylistsViewProps) => {
           {playlists.map((pl) => (
             <div
               key={pl.id}
-              onClick={() => onPlaylistClick(pl.id)}
+              onClick={() => navigate('playlist-detail', pl.id)}
               className="group cursor-pointer bg-zinc-900/20 border border-zinc-800/30 p-5 rounded-3xl hover:bg-zinc-800/40 transition-all duration-500"
             >
               <div className="aspect-square rounded-2xl overflow-hidden mb-6 relative">
@@ -198,7 +189,7 @@ const PlaylistsView = ({ onPlaylistClick }: PlaylistsViewProps) => {
                   decoding="async"
                   className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                 />
-                <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity flex items-center justify-center">
                   <div className="w-12 h-12 bg-white text-black rounded-full flex items-center justify-center transform scale-90 group-hover:scale-100 transition-transform duration-300">
                     <Play className="w-5 h-5 fill-black" />
                   </div>
@@ -274,7 +265,7 @@ const PlaylistsView = ({ onPlaylistClick }: PlaylistsViewProps) => {
                           alt="Cover preview"
                           className="w-full h-full object-cover"
                         />
-                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center">
+                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity flex flex-col items-center justify-center">
                           <Image className="w-8 h-8 text-white mb-2" />
                           <span className="text-[10px] text-white uppercase tracking-widest font-bold">
                             Change Image
@@ -380,7 +371,7 @@ const PlaylistsView = ({ onPlaylistClick }: PlaylistsViewProps) => {
                       decoding="async"
                       className="w-full h-full object-cover"
                     />
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center">
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity flex flex-col items-center justify-center">
                       <Image className="w-8 h-8 text-white mb-2" />
                       <span className="text-[10px] text-white uppercase tracking-widest font-bold">
                         Change Cover

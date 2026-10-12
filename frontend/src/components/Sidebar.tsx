@@ -1,51 +1,29 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { Home, Library, Search, Settings, Music2, LogOut, Shield, Music, Heart, Disc3, ListMusic } from 'lucide-react';
-import { Page, Playlist } from '@/types';
+import { Page } from '@/types';
 import { useAuthStore } from '@/stores/authStore';
 import { usePlayerStore } from '@/stores/playerStore';
+import { usePlaylistStore } from '@/stores/playlistStore';
+import { navigate, useRoute } from '@/utils/router';
 
-interface SidebarProps {
-  activePage: Page;
-  setActivePage: (page: Page) => void;
-  playlists: Playlist[];
-  onPlaylistClick: (id: string) => void;
-}
-
-const Sidebar = ({ activePage, setActivePage, playlists, onPlaylistClick }: SidebarProps) => {
-  const { logout, user } = useAuthStore();
-  const currentTrack = usePlayerStore((state) => state.currentTrack);
+const Sidebar = () => {
+  const logout = useAuthStore((s) => s.logout);
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
+  const hasTrack = usePlayerStore((s) => s.currentTrack !== null);
+  const playlists = usePlaylistStore((s) => s.playlists);
+  const { page: activePage, playlistId: activePlaylistId } = useRoute();
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-  const [isLoggingOut, setIsLoggingOut] = useState(false);
-  const logoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const isAdmin = user?.isAdmin ?? false;
 
   const handleLogoutClick = () => setShowLogoutConfirm(true);
 
   const handleLogoutConfirm = () => {
     setShowLogoutConfirm(false);
-    setIsLoggingOut(true);
-    if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current);
-    logoutTimerRef.current = setTimeout(() => {
-      logout().catch((err) => console.error('Logout failed:', err));
-    }, 1500);
+    logout().catch((err) => console.error('Logout failed:', err));
   };
-
-  if (isLoggingOut) {
-    return (
-      <div className="fixed inset-0 z-[100] bg-[#0a0a0a] flex flex-col items-center justify-center animate-fade-in">
-        <svg className="animate-spin h-8 w-8 text-zinc-600 mb-6" viewBox="0 0 24 24">
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="none" />
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-        </svg>
-        <h2 className="text-base font-light text-zinc-400 tracking-widest uppercase">Logging out</h2>
-      </div>
-    );
-  }
 
   const navItems = [
     { id: 'home', icon: Home, label: 'Home' },
-    ...(isAdmin ? [{ id: 'library', icon: Music, label: 'Library' }] : []),
+    { id: 'library', icon: Music, label: 'Library' },
     { id: 'liked', icon: Heart, label: 'Liked Songs' },
     { id: 'albums', icon: Disc3, label: 'Albums' },
     { id: 'search', icon: Search, label: 'Search' },
@@ -54,7 +32,7 @@ const Sidebar = ({ activePage, setActivePage, playlists, onPlaylistClick }: Side
   ];
 
   return (
-    <aside className="w-64 h-full bg-[#0c0c0c] border-r border-zinc-800/40 flex flex-col hidden md:flex">
+    <aside className="w-64 h-full bg-[#0c0c0c] border-r border-zinc-800/40 flex flex-col flex-shrink-0">
       {/* Logo */}
       <div className="px-6 py-7 flex items-center gap-3">
         <div className="w-9 h-9 bg-gradient-to-br from-zinc-700 to-zinc-900 rounded-xl flex items-center justify-center shadow-lg ring-1 ring-white/5 flex-shrink-0">
@@ -73,7 +51,8 @@ const Sidebar = ({ activePage, setActivePage, playlists, onPlaylistClick }: Side
           return (
             <button
               key={item.id}
-              onClick={() => setActivePage(item.id as Page)}
+              onClick={() => navigate(item.id as Page)}
+              aria-current={isActive ? 'page' : undefined}
               className={`relative flex items-center gap-3.5 px-4 py-2.5 rounded-lg transition-all duration-200 group ${
                 isActive
                   ? 'bg-zinc-800/70 text-white'
@@ -114,8 +93,12 @@ const Sidebar = ({ activePage, setActivePage, playlists, onPlaylistClick }: Side
             playlists.map((pl) => (
               <button
                 key={pl.id}
-                onClick={() => onPlaylistClick(pl.id)}
-                className="text-left px-4 py-2 text-sm text-zinc-500 hover:text-zinc-200 transition-all duration-150 truncate rounded-lg hover:bg-zinc-800/30 group"
+                onClick={() => navigate('playlist-detail', pl.id)}
+                className={`text-left px-4 py-2 text-sm transition-all duration-150 truncate rounded-lg hover:bg-zinc-800/30 group ${
+                  activePage === 'playlist-detail' && activePlaylistId === pl.id
+                    ? 'text-white bg-zinc-800/40'
+                    : 'text-zinc-500 hover:text-zinc-200'
+                }`}
               >
                 {pl.name}
               </button>
@@ -125,10 +108,10 @@ const Sidebar = ({ activePage, setActivePage, playlists, onPlaylistClick }: Side
       </div>
 
       {/* Footer */}
-      <div className={`px-3 pt-3 border-t border-zinc-800/40 space-y-0.5 ${currentTrack ? 'pb-28' : 'pb-4'}`}>
+      <div className={`px-3 pt-3 border-t border-zinc-800/40 space-y-0.5 ${hasTrack ? 'pb-28' : 'pb-4'}`}>
         {isAdmin && (
           <button
-            onClick={() => setActivePage('admin')}
+            onClick={() => navigate('admin')}
             className={`flex items-center gap-3.5 w-full px-4 py-2.5 rounded-lg transition-all duration-200 group text-sm font-medium ${
               activePage === 'admin'
                 ? 'bg-amber-500/15 text-amber-400'

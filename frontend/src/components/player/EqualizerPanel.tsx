@@ -1,5 +1,7 @@
 import { X, SlidersHorizontal } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
+import { useShallow } from 'zustand/react/shallow';
+import { audioEngine } from '@/services/audioEngine';
 
 const EQ_BANDS = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
 const EQ_BAND_LABELS = ['32', '64', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'];
@@ -21,13 +23,20 @@ const EQ_PRESETS: EqPreset[] = [
 ];
 
 const EqualizerPanel = () => {
-  const { eqEnabled, eqGains, eqPreset, showEqualizer, toggleEq, toggleEqualizer, setEqGain, setEqPreset } =
-    usePlayerStore();
+  const { eqEnabled, eqGains, eqPreset, showEqualizer } = usePlayerStore(
+    useShallow((s) => ({
+      eqEnabled: s.eqEnabled,
+      eqGains: s.eqGains,
+      eqPreset: s.eqPreset,
+      showEqualizer: s.showEqualizer,
+    }))
+  );
+  const { toggleEq, toggleEqualizer, setEqGain, setEqPreset } = usePlayerStore.getState();
 
   if (!showEqualizer) return null;
 
   return (
-    <div className="fixed bottom-24 right-4 w-[420px] max-w-[95vw] bg-[#111] border border-zinc-800 rounded-2xl shadow-2xl z-50">
+    <div className="fixed bottom-[140px] md:bottom-24 right-2 md:right-4 w-[420px] max-w-[95vw] bg-[#111] border border-zinc-800 rounded-2xl shadow-2xl z-50">
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
         <div className="flex items-center gap-2">
@@ -51,12 +60,20 @@ const EqualizerPanel = () => {
           </button>
           <button
             onClick={toggleEqualizer}
+            aria-label="Close equalizer"
             className="p-1 rounded-full hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
       </div>
+
+      {!audioEngine.supportsWebAudio && (
+        <p className="px-5 py-3 text-xs text-amber-400/80 border-b border-zinc-800">
+          This browser (iOS/iPadOS Safari) can't apply an equalizer without breaking background playback, so EQ settings
+          are saved but not applied here.
+        </p>
+      )}
 
       {/* Presets */}
       <div className="px-5 py-3 border-b border-zinc-800">

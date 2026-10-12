@@ -1,10 +1,7 @@
-version: '3.8'
-
-# Production Docker Compose with Caddy for automatic HTTPS
-# Usage: docker-compose -f docker-compose.prod.yml up -d
+# Production: Caddy (HTTPS) in front of the Resonance app.
+# Usage: docker compose -f docker-compose.prod.yml up -d --build
 
 services:
-  # Caddy - Reverse proxy with automatic HTTPS
   caddy:
     image: caddy:2-alpine
     container_name: resonance-caddy
@@ -12,16 +9,19 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      - RESONANCE_HOST=${RESONANCE_HOST:-ubuntu-minecraft-vm.tail1d6ee2.ts.net}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+      # Lets Caddy fetch the Tailscale HTTPS certificate for the *.ts.net hostname
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
     depends_on:
       - resonance
     networks:
       - resonance-network
 
-  # Resonance App
   resonance:
     build: .
     container_name: resonance-app
@@ -38,12 +38,14 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - ADMIN_USERNAME=${ADMIN_USERNAME}
       - ADMIN_EMAIL=${ADMIN_EMAIL}
+      - FRONTEND_URL=https://${RESONANCE_HOST:-ubuntu-minecraft-vm.tail1d6ee2.ts.net}
+      - ACOUSTID_API_KEY=${ACOUSTID_API_KEY:-}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 20s
     networks:
       - resonance-network
 

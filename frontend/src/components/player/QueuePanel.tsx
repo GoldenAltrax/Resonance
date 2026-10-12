@@ -17,6 +17,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { usePlayerStore } from '@/stores/playerStore';
+import { useShallow } from 'zustand/react/shallow';
 import { Track, api } from '@/services/api';
 
 interface SortableQueueItemProps {
@@ -73,7 +74,7 @@ const SortableQueueItem = ({
       <button
         {...attributes}
         {...listeners}
-        className="p-1 text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity"
+        className="p-1 text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
       >
         <GripVertical className="w-4 h-4" />
       </button>
@@ -123,7 +124,7 @@ const SortableQueueItem = ({
       {/* Remove Button */}
       <button
         onClick={onRemove}
-        className="p-1.5 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+        className="p-1.5 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-all"
         title="Remove from queue"
       >
         <Trash2 className="w-4 h-4" />
@@ -133,20 +134,17 @@ const SortableQueueItem = ({
 };
 
 const QueuePanel = () => {
-  const {
-    queue,
-    queueIndex,
-    currentTrack,
-    isPlaying,
-    shuffle,
-    shuffleHistory,
-    showQueue,
-    toggleQueue,
-    play,
-    removeFromQueue,
-    reorderQueue,
-    clearQueue,
-  } = usePlayerStore();
+  const { queue, queueIndex, currentTrack, isPlaying, shuffle, showQueue } = usePlayerStore(
+    useShallow((s) => ({
+      queue: s.queue,
+      queueIndex: s.queueIndex,
+      currentTrack: s.currentTrack,
+      isPlaying: s.isPlaying,
+      shuffle: s.shuffle,
+      showQueue: s.showQueue,
+    }))
+  );
+  const { toggleQueue, playAt, removeFromQueue, reorderQueue, clearQueue } = usePlayerStore.getState();
   const [isClosing, setIsClosing] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current); }, []);
@@ -172,12 +170,8 @@ const QueuePanel = () => {
     }
   }, [reorderQueue]);
 
-  const handlePlayTrack = (index: number) => {
-    const track = queue[index];
-    if (track) {
-      play(track, queue);
-    }
-  };
+  // Jump by position, not by track id: the queue may contain the same track twice
+  const handlePlayTrack = (index: number) => playAt(index);
 
   const handleClose = () => {
     setIsClosing(true);
@@ -194,7 +188,7 @@ const QueuePanel = () => {
   const previousTracks = queue.slice(0, queueIndex);
 
   return (
-    <div className="fixed top-0 right-0 bottom-24 z-40 pointer-events-none">
+    <div className="fixed top-0 right-0 bottom-0 md:bottom-24 z-[60] md:z-40 pointer-events-none">
       <div
         className={`w-[400px] max-w-[90vw] h-full bg-[#0a0a0a] border-l border-zinc-800/50 flex flex-col shadow-2xl transition-transform duration-300 ease-out pointer-events-auto ${
           isClosing ? 'translate-x-full' : 'translate-x-0'
@@ -215,7 +209,7 @@ const QueuePanel = () => {
             </div>
             {shuffle && queue.length > 0 && (
               <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 tabular-nums">
-                {shuffleHistory.length + 1} / {queue.length}
+                {queueIndex + 1} / {queue.length}
               </span>
             )}
           </div>
@@ -291,7 +285,6 @@ const QueuePanel = () => {
                               index={absIndex}
                               isCurrent={false}
                               isPlaying={false}
-                              isShufflePlayed={shuffle && shuffleHistory.includes(absIndex)}
                               onPlay={() => handlePlayTrack(absIndex)}
                               onRemove={() => removeFromQueue(absIndex)}
                             />
@@ -315,7 +308,7 @@ const QueuePanel = () => {
                             index={i}
                             isCurrent={false}
                             isPlaying={false}
-                            isShufflePlayed={shuffle && shuffleHistory.includes(i)}
+                            isShufflePlayed
                             onPlay={() => handlePlayTrack(i)}
                             onRemove={() => removeFromQueue(i)}
                           />

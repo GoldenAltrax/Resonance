@@ -17,8 +17,10 @@ const isProduction = process.env.NODE_ENV === 'production';
 
 // Ensure data directories exist
 const dataDir = join(__dirname, '..', 'data');
-const uploadsAudioDir = join(__dirname, '..', 'uploads', 'audio');
-const uploadsImagesDir = join(__dirname, '..', 'uploads', 'images');
+const uploadsDir = join(__dirname, '..', 'uploads');
+const uploadsAudioDir = join(uploadsDir, 'audio');
+const uploadsImagesDir = join(uploadsDir, 'images');
+const publicDir = join(__dirname, 'public');
 
 [dataDir, uploadsAudioDir, uploadsImagesDir].forEach(dir => {
   if (!existsSync(dir)) {
@@ -35,10 +37,21 @@ const { searchRoutes } = await import('./routes/search.js');
 const { adminRoutes } = await import('./routes/admin.js');
 const { favoriteRoutes } = await import('./routes/favorites.js');
 const { historyRoutes } = await import('./routes/history.js');
+const { sqlite } = await import('./db/index.js');
 
 const app = Fastify({
   logger: isProduction
-    ? { level: 'info' }
+    ? {
+        level: 'info',
+        // Never log JWTs passed as ?token= (media elements can't send headers)
+        redact: ['req.headers.authorization'],
+        serializers: {
+          req: (req) => ({
+            method: req.method,
+            url: req.url.replace(/([?&]token=)[^&]+/, '$1[redacted]'),
+          }),
+        },
+      }
     : {
         level: 'info',
         transport: {
@@ -52,26 +65,16 @@ const app = Fastify({
 
 // Register plugins
 await app.register(cors, {
-  origin: isProduction
-    ? [
-        process.env.FRONTEND_URL || 'https://localhost',
-        'tauri://localhost',
-        'https://tauri.localhost',
-        'http://tauri.localhost',
-      ]
-    : [
-        process.env.FRONTEND_URL || 'http://localhost:5173',
-        'tauri://localhost',
-        'https://tauri.localhost',
-        'http://tauri.localhost',
-      ],
+  origin: process.env.FRONTEND_URL || (isProduction ? 'https://localhost' : 'http://localhost:5173'),
   credentials: true,
 });
 
-// Global rate limiting - 1000 requests per minute per IP (allows bulk operations)
+// Global rate limiting for the API only. Static assets and cover images are excluded:
+// a library page can legitimately request hundreds of covers in a few seconds.
 await app.register(rateLimit, {
   max: 1000,
   timeWindow: '1 minute',
+  allowList: (request) => !request.url.startsWith('/api/'),
   errorResponseBuilder: (_request, context) => ({
     error: 'Too many requests',
     message: `Rate limit exceeded. Try again in ${Math.ceil(context.ttl / 1000)} seconds.`,
@@ -92,23 +95,43 @@ await app.register(jwt, {
 
 await app.register(multipart, {
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB max file size
+    fileSize: 100 * 1024 * 1024, // 100MB (matches the track upload route limit)
   },
 });
 
-// Serve uploaded files
-await app.register(fastifyStatic, {
-  root: join(__dirname, '..', 'uploads'),
-  prefix: '/uploads/',
-  decorateReply: !isProduction, // Only decorate if not in production (we'll register another static plugin)
+// Audio files are only reachable through the authenticated /api/tracks/:id/stream route.
+app.addHook('onRequest', async (request, reply) => {
+  if (request.url.startsWith('/uploads/') && !request.url.startsWith('/uploads/images/')) {
+    return reply.status(404).send({ error: 'Not found' });
+  }
 });
 
-// In production, serve frontend build from public folder
+// Uploaded images (cover art, avatars, playlist covers). File names are UUIDs, so they can
+// be cached aggressively. This registration owns reply.sendFile, which the stream route
+// and the SPA fallback use with an explicit root.
+await app.register(fastifyStatic, {
+  root: uploadsDir,
+  prefix: '/uploads/',
+  maxAge: '7d',
+  decorateReply: true,
+});
+
+// In production, serve the frontend build from the public folder
 if (isProduction) {
   await app.register(fastifyStatic, {
-    root: join(__dirname, 'public'),
+    root: publicDir,
     prefix: '/',
     decorateReply: false,
+    wildcard: false,
+    cacheControl: false, // set explicitly below
+    setHeaders: (res, filePath) => {
+      // Hashed build assets never change; the shell, manifest and service worker must revalidate
+      if (filePath.includes(`${join('public', 'assets')}`)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+    },
   });
 }
 
@@ -127,22 +150,39 @@ app.get('/api/health', async () => {
   return { status: 'ok', timestamp: new Date().toISOString() };
 });
 
-// SPA fallback - serve index.html for non-API routes in production
+// SPA fallback - serve index.html for client-side routes in production
 if (isProduction) {
   app.setNotFoundHandler((request, reply) => {
-    if (!request.url.startsWith('/api') && !request.url.startsWith('/uploads')) {
-      return reply.sendFile('index.html');
+    const isAppRoute =
+      request.method === 'GET' &&
+      !request.url.startsWith('/api') &&
+      !request.url.startsWith('/uploads');
+    if (isAppRoute) {
+      reply.header('Cache-Control', 'no-cache');
+      return reply.sendFile('index.html', publicDir, { cacheControl: false });
     }
     return reply.status(404).send({ error: 'Not found' });
   });
 }
+
+// Graceful shutdown so in-flight requests finish and SQLite closes cleanly on container restarts
+const shutdown = async (signal: string) => {
+  app.log.info(`${signal} received, shutting down`);
+  try {
+    await app.close();
+    sqlite.close();
+  } finally {
+    process.exit(0);
+  }
+};
+process.once('SIGTERM', () => void shutdown('SIGTERM'));
+process.once('SIGINT', () => void shutdown('SIGINT'));
 
 // Start server
 const start = async () => {
   try {
     const port = parseInt(process.env.PORT || '3000', 10);
     await app.listen({ port, host: '0.0.0.0' });
-    console.log(`🎵 Resonance API running on http://localhost:${port}`);
   } catch (err) {
     app.log.error(err);
     process.exit(1);

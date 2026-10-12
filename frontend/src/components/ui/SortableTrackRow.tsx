@@ -3,6 +3,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Play, MoreHorizontal, GripVertical, Heart, Trash2, ListPlus, ListEnd, ListStart, Check } from 'lucide-react';
 import { Track, Playlist, api } from '@/services/api';
+import { playlistCoverUrl } from '@/utils/cover';
 import { useFavoritesStore } from '@/stores/favoritesStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { toast } from '@/stores/toastStore';
@@ -41,7 +42,8 @@ const SortableTrackRow = ({
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const { isFavorited, toggleFavorite } = useFavoritesStore();
-  const { addToQueue, playNext } = usePlayerStore();
+  // Actions only: stable references, no subscription
+  const { addToQueue, playNext } = usePlayerStore.getState();
 
   const toggleMenu = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -142,7 +144,7 @@ const SortableTrackRow = ({
       <div
         {...attributes}
         {...listeners}
-        className="w-6 flex items-center justify-center text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity"
+        className="w-6 flex items-center justify-center text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
         onClick={(e) => e.stopPropagation()}
       >
         <GripVertical className="w-4 h-4" />
@@ -208,7 +210,7 @@ const SortableTrackRow = ({
         <button
           ref={menuButtonRef}
           onClick={toggleMenu}
-          className="text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+          className="text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
         >
           <MoreHorizontal className="w-5 h-5" />
         </button>
@@ -305,7 +307,7 @@ const SortableTrackRow = ({
                         >
                           <div className="w-8 h-8 bg-zinc-800 rounded overflow-hidden flex-shrink-0">
                             <img
-                              src={playlist.coverImage ? api.getUploadUrl(playlist.coverImage) : `https://picsum.photos/seed/${playlist.id}/40/40`}
+                              src={playlistCoverUrl(playlist)}
                               alt={playlist.name}
                               className="w-full h-full object-cover"
                             />

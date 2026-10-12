@@ -1,7 +1,14 @@
 // LRCLIB API service for fetching synced lyrics
 // https://lrclib.net/docs
 
-import { transliterate } from 'transliteration';
+// The transliteration tables are ~190 KB, so they're only downloaded when a song
+// actually has non-Latin lyrics.
+let transliterateFn: ((text: string) => string) | null = null;
+
+async function prepareTransliteration(...texts: (string | null | undefined)[]) {
+  if (transliterateFn || !texts.some((t) => t && hasNonLatinCharacters(t))) return;
+  transliterateFn = (await import('transliteration')).transliterate;
+}
 
 const LRCLIB_API = 'https://lrclib.net/api';
 
@@ -19,10 +26,10 @@ function hasNonLatinCharacters(text: string): boolean {
  * Transliterate text to Latin characters if it contains non-Latin scripts
  */
 function transliterateText(text: string): string {
-  if (!hasNonLatinCharacters(text)) {
+  if (!transliterateFn || !hasNonLatinCharacters(text)) {
     return text;
   }
-  return transliterate(text);
+  return transliterateFn(text);
 }
 
 export interface LyricLine {
@@ -117,6 +124,7 @@ export async function fetchLyrics(
     }
 
     const data: LyricsResponse = await response.json();
+    await prepareTransliteration(data.syncedLyrics, data.plainLyrics);
 
     // Parse synced lyrics if available (transliteration applied in parseLRC)
     const synced = data.syncedLyrics ? parseLRC(data.syncedLyrics) : null;
@@ -151,4 +159,43 @@ export async function searchLyrics(query: string): Promise<LyricsResponse[]> {
     console.error('Error searching lyrics:', error);
     return [];
   }
+}
+
+const lyricsCache = new Map<string, { synced: LyricLine[] | null; plain: string | null }>();
+
+/**
+ * Lyrics for a library track: lyrics embedded in the file's tags first (served by our
+ * backend, no third party involved), then LRCLIB. Results are cached per track.
+ */
+export async function fetchTrackLyrics(track: {
+  id: string;
+  title: string;
+  artist: string | null;
+}): Promise<{ synced: LyricLine[] | null; plain: string | null }> {
+  const cached = lyricsCache.get(track.id);
+  if (cached) return cached;
+
+  let result: { synced: LyricLine[] | null; plain: string | null } = { synced: null, plain: null };
+  try {
+    const { api } = await import('@/services/api');
+    const embedded = await api.getEmbeddedLyrics(track.id);
+    if (embedded.synced?.length || embedded.lyrics) {
+      await prepareTransliteration(embedded.lyrics, ...(embedded.synced ?? []).map((l) => l.text));
+      result = {
+        synced: embedded.synced?.length
+          ? embedded.synced.map((l) => ({ time: l.time, text: transliterateText(l.text) }))
+          : null,
+        plain: embedded.lyrics ? transliterateText(embedded.lyrics) : null,
+      };
+    }
+  } catch {
+    // Fall through to LRCLIB
+  }
+
+  if (!result.synced && !result.plain) {
+    result = await fetchLyrics(track.title, track.artist);
+  }
+
+  lyricsCache.set(track.id, result);
+  return result;
 }

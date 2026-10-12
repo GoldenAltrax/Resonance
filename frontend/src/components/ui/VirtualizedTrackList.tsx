@@ -107,7 +107,7 @@ const VirtualizedTrackList = ({
               >
                 {/* Drag Handle */}
                 {showDragHandle && (
-                  <div className="w-6 flex items-center justify-center text-zinc-600 opacity-0 group-hover:opacity-100 cursor-grab">
+                  <div className="w-6 flex items-center justify-center text-zinc-600 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 cursor-grab">
                     <GripVertical className="w-4 h-4" />
                   </div>
                 )}
@@ -179,7 +179,7 @@ const VirtualizedTrackList = ({
                     className={`w-8 flex items-center justify-center transition-all duration-200 ${
                       favorited
                         ? 'text-pink-500 hover:text-pink-400'
-                        : 'text-zinc-600 hover:text-pink-500 opacity-0 group-hover:opacity-100'
+                        : 'text-zinc-600 hover:text-pink-500 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100'
                     }`}
                   >
                     <Heart className={`w-4 h-4 ${favorited ? 'fill-current' : ''}`} />
@@ -190,7 +190,7 @@ const VirtualizedTrackList = ({
                 {showEdit && onEdit && (
                   <button
                     onClick={() => onEdit(track)}
-                    className="w-8 flex items-center justify-center text-zinc-600 hover:text-white transition-colors opacity-0 group-hover:opacity-100"
+                    className="w-8 flex items-center justify-center text-zinc-600 hover:text-white transition-colors opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
                   >
                     <Pencil className="w-4 h-4" />
                   </button>
@@ -200,7 +200,7 @@ const VirtualizedTrackList = ({
                 {showDelete && onDelete && (
                   <button
                     onClick={() => onDelete(track)}
-                    className="w-8 flex items-center justify-center text-zinc-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                    className="w-8 flex items-center justify-center text-zinc-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>

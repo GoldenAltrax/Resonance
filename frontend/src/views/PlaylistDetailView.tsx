@@ -18,6 +18,7 @@ import { usePlaylistStore } from '@/stores/playlistStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useAuthStore } from '@/stores/authStore';
 import { Track, api } from '@/services/api';
+import { playlistCoverUrl } from '@/utils/cover';
 import { toast } from '@/stores/toastStore';
 import LibraryPickerModal from '@/components/LibraryPickerModal';
 import AcousticDuplicateModal, { PendingDuplicate } from '@/components/ui/AcousticDuplicateModal';
@@ -84,7 +85,9 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
       coordinateGetter: sortableKeyboardCoordinates,
     })
   );
-  const { play, currentTrack, isPlaying } = usePlayerStore();
+  const { play } = usePlayerStore.getState();
+  const currentTrack = usePlayerStore((s) => s.currentTrack);
+  const isPlaying = usePlayerStore((s) => s.isPlaying);
 
   useEffect(() => {
     fetchPlaylist(playlistId);
@@ -255,14 +258,7 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
   };
 
   // Resolve cover image URL with cache-busting for local images
-  const getCoverUrl = () => {
-    if (currentPlaylist?.coverImage) {
-      return currentPlaylist.coverImage.startsWith('http')
-        ? currentPlaylist.coverImage
-        : api.getUploadUrl(currentPlaylist.coverImage, { bust: true });
-    }
-    return `https://picsum.photos/seed/${currentPlaylist?.id}/400/400`;
-  };
+  const getCoverUrl = () => (currentPlaylist ? playlistCoverUrl(currentPlaylist) : '');
 
   // Handle files dropped via drag & drop
   const handleFilesDropped = useCallback(async (files: File[]) => {
@@ -715,11 +711,7 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
                       >
                         <div className="w-12 h-12 bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0">
                           <img
-                            src={
-                              playlist.coverImage
-                                ? api.getUploadUrl(playlist.coverImage)
-                                : `https://picsum.photos/seed/${playlist.id}/48/48`
-                            }
+                            src={playlistCoverUrl(playlist)}
                             alt={playlist.name}
                             className="w-full h-full object-cover"
                           />
@@ -778,11 +770,7 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
                       >
                         <div className="w-12 h-12 bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0">
                           <img
-                            src={
-                              playlist.coverImage
-                                ? api.getUploadUrl(playlist.coverImage)
-                                : `https://picsum.photos/seed/${playlist.id}/48/48`
-                            }
+                            src={playlistCoverUrl(playlist)}
                             alt={playlist.name}
                             className="w-full h-full object-cover"
                           />

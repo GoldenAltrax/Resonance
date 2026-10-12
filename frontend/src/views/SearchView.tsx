@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Search as SearchIcon, TrendingUp, Compass, Headphones, Music, ListMusic, Loader2, Play, X, MoreHorizontal, Heart, Plus, ListEnd, ListStart, Radio } from 'lucide-react';
 import { api, Track, Playlist } from '@/services/api';
+import { playlistCoverUrl } from '@/utils/cover';
 import { usePlayerStore } from '@/stores/playerStore';
 import { usePlaylistStore } from '@/stores/playlistStore';
 import { useFavoritesStore } from '@/stores/favoritesStore';
@@ -22,7 +23,9 @@ const SearchView = () => {
   const [showPlaylistPicker, setShowPlaylistPicker] = useState<Track | null>(null);
   const menuButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
-  const { play, addToQueue, playNext, startRadio } = usePlayerStore();
+  const searchSeqRef = useRef(0);
+  // Actions only: stable references, no subscription
+  const { play, addToQueue, playNext, startRadio } = usePlayerStore.getState();
   const { playlists, addTrackToPlaylist } = usePlaylistStore();
   const { isFavorited, toggleFavorite } = useFavoritesStore();
   const [loadingRadio, setLoadingRadio] = useState<string | null>(null);
@@ -101,19 +104,23 @@ const SearchView = () => {
       return;
     }
 
+    const requestId = ++searchSeqRef.current;
     setIsLoading(true);
     setError(null);
     setHasSearched(true);
 
     try {
       const searchResults = await api.search(trimmed, searchType);
+      // Responses can arrive out of order while typing; keep only the latest
+      if (requestId !== searchSeqRef.current) return;
       setResults(searchResults);
       saveRecentSearch(trimmed);
     } catch (err) {
+      if (requestId !== searchSeqRef.current) return;
       setError(err instanceof Error ? err.message : 'Search failed');
       setResults({ tracks: [], playlists: [] });
     } finally {
-      setIsLoading(false);
+      if (requestId === searchSeqRef.current) setIsLoading(false);
     }
   }, [searchType, saveRecentSearch]);
 
@@ -298,7 +305,7 @@ const SearchView = () => {
                     <button
                       onClick={(e) => handleStartRadio(track, e)}
                       disabled={loadingRadio === track.id}
-                      className="hidden sm:flex w-10 h-10 bg-zinc-800/50 rounded-lg items-center justify-center hover:bg-green-900/30 hover:text-green-400 transition-colors text-zinc-500 opacity-0 group-hover:opacity-100 flex-shrink-0"
+                      className="hidden sm:flex w-10 h-10 bg-zinc-800/50 rounded-lg items-center justify-center hover:bg-green-900/30 hover:text-green-400 transition-colors text-zinc-500 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 flex-shrink-0"
                       title="Start Radio"
                     >
                       {loadingRadio === track.id ? (
@@ -326,7 +333,7 @@ const SearchView = () => {
                       className={`flex-shrink-0 transition-all duration-200 hidden sm:block ${
                         isFavorited(track.id)
                           ? 'text-pink-500 hover:text-pink-400 !block'
-                          : 'text-zinc-600 hover:text-pink-500 opacity-0 group-hover:opacity-100'
+                          : 'text-zinc-600 hover:text-pink-500 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100'
                       }`}
                     >
                       <Heart className={`w-5 h-5 ${isFavorited(track.id) ? 'fill-current' : ''}`} />
@@ -365,7 +372,7 @@ const SearchView = () => {
                   >
                     <div className="aspect-square bg-zinc-800 rounded-xl mb-3 overflow-hidden">
                       <img
-                        src={playlist.coverImage || `https://picsum.photos/seed/${playlist.id}/400/400`}
+                        src={playlistCoverUrl(playlist)}
                         alt={playlist.name}
                         loading="lazy"
                         decoding="async"
@@ -427,7 +434,7 @@ const SearchView = () => {
                         e.stopPropagation();
                         removeRecentSearch(term);
                       }}
-                      className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity"
+                      className="opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 hover:text-red-400 transition-opacity"
                     >
                       <X className="w-3 h-3" />
                     </button>
@@ -512,7 +519,7 @@ const SearchView = () => {
                   >
                     <div className="w-10 h-10 bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0">
                       <img
-                        src={playlist.coverImage ? api.getUploadUrl(playlist.coverImage) : `https://picsum.photos/seed/${playlist.id}/100/100`}
+                        src={playlistCoverUrl(playlist)}
                         alt={playlist.name}
                         className="w-full h-full object-cover"
                       />

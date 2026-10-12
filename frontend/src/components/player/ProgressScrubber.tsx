@@ -1,16 +1,36 @@
-import { useRef, useState, useCallback, useEffect } from 'react';
-import { formatTime } from '@/hooks/useAudioPlayer';
+import { useRef, useState, useCallback } from 'react';
+import { usePlaybackStore } from '@/stores/playbackStore';
+import { usePlayerStore } from '@/stores/playerStore';
+import { formatDuration } from '@/utils/time';
+
+/** Elapsed time label; re-renders on its own once per second instead of re-rendering its parent. */
+export const ElapsedTime = ({ className }: { className?: string }) => {
+  const seconds = usePlaybackStore((s) => Math.floor(s.progress));
+  return <span className={className}>{formatDuration(seconds)}</span>;
+};
+
+export const TotalTime = ({ className }: { className?: string }) => {
+  const duration = usePlaybackStore((s) => Math.floor(s.duration));
+  return <span className={className}>{formatDuration(duration)}</span>;
+};
 
 interface ProgressScrubberProps {
-  progress: number;
-  duration: number;
-  onSeek: (time: number) => void;
+  /** 'touch' uses a taller hit area and an always-visible thumb (mobile now-playing screen). */
+  variant?: 'desktop' | 'touch';
 }
 
-export const ProgressScrubber = ({ progress, duration, onSeek }: ProgressScrubberProps) => {
+/**
+ * Seek bar. Uses pointer events (mouse, touch and pen), previews the position while
+ * dragging and seeks once on release — seeking on every move makes audio stutter.
+ */
+export const ProgressScrubber = ({ variant = 'desktop' }: ProgressScrubberProps) => {
+  const progress = usePlaybackStore((s) => s.progress);
+  const duration = usePlaybackStore((s) => s.duration);
+  const seek = usePlayerStore((s) => s.seek);
   const trackRef = useRef<HTMLDivElement>(null);
   const [hoverPct, setHoverPct] = useState<number | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
+  const [dragPct, setDragPct] = useState<number | null>(null);
+  const isTouch = variant === 'touch';
 
   const getPctFromX = useCallback((clientX: number): number => {
     if (!trackRef.current) return 0;
@@ -18,104 +38,94 @@ export const ProgressScrubber = ({ progress, duration, onSeek }: ProgressScrubbe
     return Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
   }, []);
 
-  // Attach document-level listeners while dragging so the scrubber
-  // keeps tracking even if the cursor leaves the element.
-  useEffect(() => {
-    if (!isDragging) return;
+  const commit = (pct: number) => {
+    if (duration > 0) seek((pct / 100) * duration);
+  };
 
-    const onMove = (e: MouseEvent) => {
-      const pct = getPctFromX(e.clientX);
-      setHoverPct(pct);
-      onSeek((pct / 100) * (duration || 0));
-    };
+  const isDragging = dragPct !== null;
+  const progressPct = isDragging ? dragPct : duration ? (progress / duration) * 100 : 0;
+  const previewPct = dragPct ?? hoverPct;
+  const isActive = isTouch || previewPct !== null;
+  const previewTime = previewPct !== null ? (previewPct / 100) * duration : null;
 
-    const onUp = () => {
-      setIsDragging(false);
-    };
-
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-    return () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-  }, [isDragging, getPctFromX, duration, onSeek]);
-
-  const progressPct = duration ? (progress / duration) * 100 : 0;
-  const isActive = hoverPct !== null || isDragging;
-  const hoverTime = hoverPct !== null ? (hoverPct / 100) * (duration || 0) : null;
-
-  // Clamp tooltip so it never overflows the track edges
-  const tooltipLeft =
-    hoverPct !== null
-      ? `clamp(18px, ${hoverPct}%, calc(100% - 18px))`
-      : '0';
+  const tooltipLeft = previewPct !== null ? `clamp(18px, ${previewPct}%, calc(100% - 18px))` : '0';
 
   return (
     <div
       ref={trackRef}
       role="slider"
-      aria-label="Track progress"
+      tabIndex={0}
+      aria-label="Seek"
       aria-valuemin={0}
-      aria-valuemax={duration || 100}
-      aria-valuenow={progress}
-      className="relative flex items-center cursor-pointer select-none"
-      style={{ height: '20px' }}
-      onMouseEnter={(e) => setHoverPct(getPctFromX(e.clientX))}
-      onMouseMove={(e) => { if (!isDragging) setHoverPct(getPctFromX(e.clientX)); }}
-      onMouseLeave={() => { if (!isDragging) setHoverPct(null); }}
-      onMouseDown={(e) => {
-        e.preventDefault();
+      aria-valuemax={Math.round(duration) || 0}
+      aria-valuenow={Math.round(progress)}
+      aria-valuetext={`${formatDuration(progress)} of ${formatDuration(duration)}`}
+      className="relative flex items-center cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-white/40 rounded"
+      style={{ height: isTouch ? '28px' : '20px', touchAction: 'none' }}
+      onPointerEnter={(e) => { if (e.pointerType === 'mouse') setHoverPct(getPctFromX(e.clientX)); }}
+      onPointerLeave={() => { if (!isDragging) setHoverPct(null); }}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        setDragPct(getPctFromX(e.clientX));
+      }}
+      onPointerMove={(e) => {
         const pct = getPctFromX(e.clientX);
-        setHoverPct(pct);
-        setIsDragging(true);
-        onSeek((pct / 100) * (duration || 0));
+        if (isDragging) setDragPct(pct);
+        else if (e.pointerType === 'mouse') setHoverPct(pct);
+      }}
+      onPointerUp={(e) => {
+        if (!isDragging) return;
+        commit(getPctFromX(e.clientX));
+        setDragPct(null);
+        if (e.pointerType !== 'mouse') setHoverPct(null);
+      }}
+      onPointerCancel={() => setDragPct(null)}
+      onKeyDown={(e) => {
+        const step = e.shiftKey ? 30 : 5;
+        if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); seek(Math.min(duration, progress + step)); }
+        if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); seek(Math.max(0, progress - step)); }
       }}
     >
-      {/* Time tooltip — appears above cursor while hovering/dragging */}
+      {/* Time tooltip — appears above the pointer while hovering/dragging */}
       <div
         className="absolute bottom-full mb-2 -translate-x-1/2 pointer-events-none z-10"
         style={{
           left: tooltipLeft,
-          opacity: isActive ? 1 : 0,
-          transform: `translateX(-50%) translateY(${isActive ? '0px' : '4px'})`,
+          opacity: previewPct !== null ? 1 : 0,
+          transform: `translateX(-50%) translateY(${previewPct !== null ? '0px' : '4px'})`,
           transition: 'opacity 120ms ease-out, transform 120ms ease-out',
         }}
       >
         <div className="bg-zinc-900 border border-zinc-700/50 text-white text-[11px] font-medium px-2 py-[3px] rounded-md tabular-nums shadow-2xl leading-none whitespace-nowrap">
-          {hoverTime !== null ? formatTime(hoverTime) : formatTime(progress)}
+          {formatDuration(previewTime ?? progress)}
         </div>
       </div>
 
-      {/* Track bar — expands from 2 → 3 px on hover */}
+      {/* Track bar */}
       <div
         className="absolute inset-x-0 top-1/2 -translate-y-1/2 rounded-full overflow-hidden"
         style={{
-          height: isActive ? '3px' : '2px',
+          height: isTouch ? '4px' : isActive ? '3px' : '2px',
           backgroundColor: 'rgb(39 39 42)',
           transition: 'height 150ms ease-out',
         }}
       >
-        {/* Lookahead region — dim preview of where you're scrubbing to */}
-        {hoverPct !== null && (
+        {hoverPct !== null && !isDragging && (
           <div
             className="absolute left-0 top-0 h-full"
-            style={{
-              width: `${hoverPct}%`,
-              backgroundColor: 'rgba(255,255,255,0.18)',
-            }}
+            style={{ width: `${hoverPct}%`, backgroundColor: 'rgba(255,255,255,0.18)' }}
           />
         )}
-        {/* Played fill */}
         <div
-          className="absolute left-0 top-0 h-full bg-white"
-          style={{ width: `${progressPct}%` }}
+          className="absolute left-0 top-0 h-full bg-white origin-left"
+          style={{ width: '100%', transform: `scaleX(${progressPct / 100})` }}
         />
       </div>
 
-      {/* Thumb dot — glows in, scales in on hover */}
+      {/* Thumb */}
       <div
-        className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white pointer-events-none"
+        className="absolute top-1/2 rounded-full bg-white pointer-events-none"
         style={{
           left: `${progressPct}%`,
           width: '13px',
