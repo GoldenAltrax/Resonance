@@ -7,9 +7,24 @@
 #
 # Set RESONANCE_HOST in .env (e.g. your-vm.tailXXXX.ts.net), or replace it with a public
 # domain to get a Let's Encrypt certificate instead.
+#
+# PUBLIC_HOST (e.g. resonancemusic.top) is served over plain HTTP to the cloudflared container:
+# Cloudflare handles HTTPS for it at its edge, so Caddy needs no certificate for it.
 
-{$RESONANCE_HOST:minecraft.tail93f9bc.ts.net} {
-    reverse_proxy resonance:3000
+{
+    servers {
+        # cloudflared connects from the Docker network; trust the visitor IP Cloudflare sends.
+        # Anyone else (Tailscale devices) is identified by their own address.
+        trusted_proxies static private_ranges
+        client_ip_headers Cf-Connecting-Ip
+    }
+}
+
+(resonance) {
+    reverse_proxy resonance:3000 {
+        # The real visitor, as worked out by client_ip_headers above (rate limits depend on it)
+        header_up X-Forwarded-For {client_ip}
+    }
 
     # Compress text responses only; audio is already compressed and must keep Range support
     encode {
@@ -53,4 +68,12 @@
             wrap json
         }
     }
+}
+
+{$RESONANCE_HOST:minecraft.tail93f9bc.ts.net} {
+    import resonance
+}
+
+http://{$PUBLIC_HOST:public.invalid} {
+    import resonance
 }

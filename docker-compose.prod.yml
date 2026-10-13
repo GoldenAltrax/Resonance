@@ -11,6 +11,7 @@ services:
       - "443:443"
     environment:
       - RESONANCE_HOST=${RESONANCE_HOST:-minecraft.tail93f9bc.ts.net}
+      - PUBLIC_HOST=${PUBLIC_HOST:-public.invalid}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -52,6 +53,23 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+    networks:
+      - resonance-network
+
+  # Public access through a Cloudflare Tunnel (no open ports on the router).
+  # Only starts with COMPOSE_PROFILES=public and CLOUDFLARE_TUNNEL_TOKEN set in .env.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: resonance-cloudflared
+    restart: unless-stopped
+    profiles: ["public"]
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+    depends_on:
+      - caddy
     networks:
       - resonance-network
 

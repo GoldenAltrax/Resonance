@@ -43,6 +43,9 @@ const { startDownloader } = await import('./services/downloader.js');
 const { sqlite } = await import('./db/index.js');
 
 const app = Fastify({
+  // Caddy is the only thing that reaches the app and puts the real client IP in X-Forwarded-For.
+  // Without this every visitor shares Caddy's IP, so rate limits (login, signup) would be global.
+  trustProxy: isProduction ? 1 : false,
   logger: isProduction
     ? {
         level: 'info',

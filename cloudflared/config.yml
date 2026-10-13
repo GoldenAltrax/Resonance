@@ -1,0 +1,5 @@
+# Ingress for the Cloudflare Tunnel (created with the cloudflared CLI, so it is configured here
+# rather than in the Zero Trust dashboard). Every hostname routed to the tunnel goes to Caddy,
+# which decides what to serve from the Host header.
+ingress:
+  - service: http://caddy:80
