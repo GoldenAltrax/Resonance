@@ -194,6 +194,11 @@ export const useAuthStore = create<AuthState>()(
         token: state.token,
         user: state.user,
       }),
+      // Hand the saved token to the API client straight away: the player restores the last
+      // track on page load, before checkAuth runs, and its stream URL needs the token
+      onRehydrateStorage: () => (state) => {
+        if (state?.token) api.setToken(state.token);
+      },
     }
   )
 );

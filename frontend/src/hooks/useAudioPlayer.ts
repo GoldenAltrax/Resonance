@@ -38,6 +38,8 @@ export function useAudioPlayer() {
 
     let crossfadeRequested = false;
     let consecutiveErrors = 0;
+    // A track that failed to load while paused (e.g. the restored track): reload it on play
+    let failedWhilePaused = false;
     let loggedLoadId = -1;
     let lastResumeWrite = 0;
     let radioRefillInFlight = false;
@@ -100,6 +102,12 @@ export function useAudioPlayer() {
         consecutiveErrors++;
         playback.setBuffering(false);
         const title = s.currentTrack?.title ?? 'this track';
+        // Not playing (session restored paused): keep the track instead of skipping through the queue
+        if (!s.isPlaying) {
+          failedWhilePaused = true;
+          consecutiveErrors = 0;
+          return;
+        }
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS || !s.peekNext()) {
           toast.error(`Couldn't play "${title}" (${reason}).`);
           s.pause();
@@ -148,11 +156,15 @@ export function useAudioPlayer() {
 
     const unsubscribe = player.subscribe((s, prev) => {
       if (s.loadId !== prev.loadId) {
+        failedWhilePaused = false;
         if (s.currentTrack) loadCurrent();
         return; // load() already applied isPlaying
       }
       if (s.isPlaying !== prev.isPlaying) {
-        if (s.isPlaying) {
+        if (s.isPlaying && failedWhilePaused && s.currentTrack) {
+          failedWhilePaused = false;
+          loadCurrent(usePlaybackStore.getState().progress);
+        } else if (s.isPlaying) {
           audioEngine.play();
         } else {
           audioEngine.pauseAll();
