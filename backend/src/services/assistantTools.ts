@@ -127,7 +127,7 @@ const definitions: Anthropic.Tool[] = [
   },
   {
     name: 'search_library',
-    description: 'Search songs already in the Resonance library by title, artist or album. Returns track ids for playlists.',
+    description: 'Search songs already in the Resonance library by title, artist or album. Returns track ids for playlists and the total number of matches. To put many songs in a playlist (the whole library, everything by an artist), use add_library_to_playlist instead of paging through searches.',
     input_schema: {
       type: 'object',
       properties: {
@@ -170,6 +170,19 @@ const definitions: Anthropic.Tool[] = [
         track_ids: { type: 'array', items: { type: 'string' }, minItems: 1 },
       },
       required: ['playlist_id', 'track_ids'],
+    },
+  },
+  {
+    name: 'add_library_to_playlist',
+    description: 'Add many library songs to a playlist in one step: the whole library, or every song whose title, artist or album matches query. Songs already in the playlist are skipped.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        playlist_id: { type: 'string' },
+        query: { type: 'string', description: 'Only songs matching all of these words. Omit for the whole library.' },
+        exclude_track_ids: { type: 'array', items: { type: 'string' }, description: 'Songs to leave out (ids from search_library)' },
+      },
+      required: ['playlist_id'],
     },
   },
   {
@@ -309,21 +322,17 @@ const handlers: Record<string, (input: Input, ctx: ToolContext) => Promise<ToolO
   },
 
   search_library(input) {
-    const words = String(input.query ?? '').trim().split(/\s+/).filter(Boolean).slice(0, 8);
-    if (!words.length) return { result: { error: 'query is required' }, summary: 'Empty search', isError: true };
+    const where = libraryMatch(String(input.query ?? ''));
+    if (!where) return { result: { error: 'query is required' }, summary: 'Empty search', isError: true };
     const limit = Math.min(50, Math.max(1, Number(input.limit) || 15));
-    const conditions = words.map((w) => {
-      const pattern = `%${w.replace(/[%_\\]/g, '\\$&')}%`;
-      return or(
-        sql`${tracks.title} LIKE ${pattern} ESCAPE '\\'`,
-        sql`${tracks.artist} LIKE ${pattern} ESCAPE '\\'`,
-        sql`${tracks.album} LIKE ${pattern} ESCAPE '\\'`,
-      );
-    });
+    const total = db.select({ n: sql<number>`count(*)` }).from(tracks).where(where).get()?.n ?? 0;
     const rows = db.select({ id: tracks.id, title: tracks.title, artist: tracks.artist, album: tracks.album, duration: tracks.duration })
-      .from(tracks).where(and(...conditions)).limit(limit).all()
+      .from(tracks).where(where).limit(limit).all()
       .map((t) => ({ id: t.id, title: t.title, artist: t.artist, album: t.album, length: fmt(t.duration) }));
-    return { result: { tracks: rows }, summary: `${rows.length} in library` };
+    return {
+      result: { total, tracks: rows },
+      summary: total > rows.length ? `${rows.length} of ${total} in library` : `${rows.length} in library`,
+    };
   },
 
   list_playlists(_input, ctx) {
@@ -367,6 +376,22 @@ const handlers: Record<string, (input: Input, ctx: ToolContext) => Promise<ToolO
     return { result: { added }, summary: `Added ${added} to "${playlist.name}"`, changed: ['playlists'] };
   },
 
+  add_library_to_playlist(input, ctx) {
+    const playlist = ownPlaylist(String(input.playlist_id ?? ''), ctx.userId);
+    if (!playlist) return { result: { error: 'Playlist not found' }, summary: 'Playlist not found', isError: true };
+    const query = String(input.query ?? '').trim();
+    const where = query ? libraryMatch(query) : undefined;
+    const exclude = new Set(((input.exclude_track_ids ?? []) as unknown[]).map(String));
+    const ids = db.select({ id: tracks.id }).from(tracks).where(where).orderBy(tracks.createdAt).all()
+      .map((t) => t.id).filter((id) => !exclude.has(id));
+    const added = addTracks(playlist.id, ids);
+    return {
+      result: { matched: ids.length, excluded: exclude.size, added, already_in_playlist: ids.length - added },
+      summary: `Added ${added} to "${playlist.name}"`,
+      changed: ['playlists'],
+    };
+  },
+
   download_status() {
     const counts = Object.fromEntries(
       db.select({ status: downloadJobs.status, count: sql<number>`count(*)` }).from(downloadJobs)
@@ -396,11 +421,29 @@ const handlers: Record<string, (input: Input, ctx: ToolContext) => Promise<ToolO
   },
 };
 
+/** Library songs whose title, artist or album contains every word of the query. */
+function libraryMatch(query: string) {
+  const words = query.trim().split(/\s+/).filter(Boolean).slice(0, 8);
+  if (!words.length) return undefined;
+  return and(...words.map((w) => {
+    const pattern = `%${w.replace(/[%_\\]/g, '\\$&')}%`;
+    return or(
+      sql`${tracks.title} LIKE ${pattern} ESCAPE '\\'`,
+      sql`${tracks.artist} LIKE ${pattern} ESCAPE '\\'`,
+      sql`${tracks.album} LIKE ${pattern} ESCAPE '\\'`,
+    );
+  }));
+}
+
 /** Adds library tracks to a playlist, skipping unknown ids and songs already in it. */
 function addTracks(playlistId: string, ids: string[]): number {
-  const unique = [...new Set(ids.map(String))].slice(0, 500);
+  const unique = [...new Set(ids.map(String))].slice(0, 5000);
   if (!unique.length) return 0;
-  const existing = new Set(db.select({ id: tracks.id }).from(tracks).where(inArray(tracks.id, unique)).all().map((t) => t.id));
+  // Checked in chunks: SQLite limits the number of bound parameters per statement
+  const existing = new Set<string>();
+  for (let i = 0; i < unique.length; i += 500) {
+    for (const t of db.select({ id: tracks.id }).from(tracks).where(inArray(tracks.id, unique.slice(i, i + 500))).all()) existing.add(t.id);
+  }
   const before = db.select({ n: sql<number>`count(*)` }).from(playlistTracks).where(eq(playlistTracks.playlistId, playlistId)).get()?.n ?? 0;
   db.transaction(() => {
     for (const id of unique) if (existing.has(id)) addToPlaylist(playlistId, id, null);
@@ -439,6 +482,7 @@ export function toolLabel(name: string, input: Input): string {
     case 'get_playlist': return 'Reading playlist';
     case 'create_playlist': return `Creating playlist "${input.name ?? ''}"`;
     case 'add_to_playlist': return `Adding ${n(input.track_ids)} to playlist`;
+    case 'add_library_to_playlist': return input.query ? `Adding library songs matching "${input.query}"` : 'Adding the whole library to playlist';
     case 'download_status': return 'Checking downloads';
     case 'web_search': return `Searching the web: ${input.query ?? ''}`;
     default: return name;

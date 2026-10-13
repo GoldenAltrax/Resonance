@@ -14,6 +14,8 @@ const MODEL = process.env.ASSISTANT_MODEL || 'claude-haiku-5-5';
 const MAX_ROUNDS = 10;
 /** Earlier messages sent with each request. Older ones stay in the database but are not resent. */
 const HISTORY_LIMIT = 40;
+/** Tool results from earlier turns longer than this are cut down to their one-line summary. */
+const OLD_RESULT_CHARS = 1500;
 
 const client = API_KEY ? new Anthropic({ apiKey: API_KEY }) : null;
 
@@ -28,6 +30,7 @@ Your main job is getting music into the library and organising it:
 - If a request is ambiguous (several different songs share a name and nothing tells them apart), ask a short question instead of guessing.
 - For lists you can work out yourself ("10 essential Daft Punk songs", "the Interstellar soundtrack"), queue them directly with queue_songs using titles and artists; you do not need to search each one.${webSearchEnabled() ? '\n- Use web_search for anything recent or that you are unsure of: charts, new releases, songs from a show or video, then queue what you find.' : '\n- Web search is not set up, so rely on what you know and the music catalog.'}
 - To make a playlist with songs that may not be downloaded yet: create_playlist first, then queue_songs with its playlist_id. Songs already in the library go into the playlist right away; the rest join as they finish downloading.
+- For many library songs at once (the whole library, everything by an artist), use add_library_to_playlist with exclude_track_ids for songs to leave out. Never page through the library with repeated searches.
 - Downloads run in the background and take a minute or so per song. Say what was queued; do not claim songs are already downloaded.
 - If a tool asks for confirmation, ask the user and wait for a yes before calling it again with confirmed: true.
 
@@ -61,19 +64,30 @@ const isPlainUserTurn = (m: { role: string; content: StoredContent }) =>
 const blocksOf = (content: StoredContent): Anthropic.ContentBlockParam[] =>
   typeof content === 'string' ? [{ type: 'text', text: content }] : content;
 
+/** A long tool result from an earlier turn, reduced to its summary so it isn't resent in full every time. */
+function shrinkResult(block: Anthropic.ContentBlockParam): Anthropic.ContentBlockParam {
+  if (block.type !== 'tool_result' || typeof block.content !== 'string' || block.content.length <= OLD_RESULT_CHARS) return block;
+  let summary = '';
+  try { summary = (JSON.parse(block.content) as { _summary?: string })._summary ?? ''; } catch { /* keep empty */ }
+  return { ...block, content: JSON.stringify({ _summary: summary, note: 'Details omitted from an earlier turn. Run the tool again if you need them.' }) };
+}
+
 /**
  * The last HISTORY_LIMIT messages in a shape the API accepts: starts at a plain user message,
  * drops tool calls whose results were never saved (reply interrupted), and merges back-to-back
- * messages from the same side.
+ * messages from the same side. Long tool results from before the latest user message are shrunk.
  */
 function recentHistory(all: Array<{ role: 'user' | 'assistant'; content: StoredContent }>): Anthropic.MessageParam[] {
   let start = Math.max(0, all.length - HISTORY_LIMIT);
   while (start < all.length && !isPlainUserTurn(all[start]!)) start++;
   const slice = all.slice(start);
+  let currentTurn = slice.length - 1;
+  while (currentTurn > 0 && !isPlainUserTurn(slice[currentTurn]!)) currentTurn--;
 
   const out: Anthropic.MessageParam[] = [];
   slice.forEach((m, i) => {
     let blocks = blocksOf(m.content);
+    if (i < currentTurn) blocks = blocks.map(shrinkResult);
     if (m.role === 'assistant') {
       const next = slice[i + 1];
       const answered = new Set(next && next.role === 'user'
@@ -258,7 +272,11 @@ export async function assistantRoutes(app: FastifyInstance) {
         messages.push({ role: 'user', content: results });
         saveMessage(conversationId, 'user', results);
 
-        if (round === MAX_ROUNDS - 1) send({ type: 'text', text: '\n\nI stopped here because this took too many steps. Tell me if you want me to continue.' });
+        if (round === MAX_ROUNDS - 1) {
+          const note = 'I stopped here because this took too many steps. Tell me if you want me to continue.';
+          send({ type: 'text', text: `\n\n${note}` });
+          saveMessage(conversationId, 'assistant', [{ type: 'text', text: note }]);
+        }
       }
       send({ type: 'done' });
     } catch (err) {
@@ -270,6 +288,7 @@ export async function assistantRoutes(app: FastifyInstance) {
           error: status === 401 ? 'The API key was rejected. Check ANTHROPIC_API_KEY.'
             : status === 429 ? 'Rate limited by the model provider. Try again in a minute.'
             : status === 529 || status === 503 ? 'The model is overloaded right now. Try again shortly.'
+            : status === 400 && /too long|context/i.test(err instanceof Error ? err.message : '') ? 'This conversation got too long. Start a new one with the button at the top.'
             : 'Something went wrong while answering.',
         });
       }
