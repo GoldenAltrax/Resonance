@@ -74,7 +74,9 @@ export async function getUrlInfo(url: string): Promise<{ title: string | null; e
     entries?: VideoInfo[];
   };
   if (data._type === 'playlist') {
-    return { title: data.title ?? null, entries: (data.entries ?? []).filter((e) => e.id) };
+    // Deleted and private videos stay in playlists with no title (or "[Deleted video]") and can't be downloaded
+    const available = (data.entries ?? []).filter((e) => e.id && e.title && !/^\[(deleted|private) video\]$/i.test(e.title));
+    return { title: data.title ?? null, entries: available };
   }
   return { title: null, entries: [data] };
 }
