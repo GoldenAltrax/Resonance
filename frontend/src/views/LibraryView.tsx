@@ -366,7 +366,7 @@ const LibraryView = () => {
             <span className="text-sm">Upload files</span>
           </button>}
           {isAdmin && <button
-            onClick={() => navigate('add-music')}
+            onClick={() => navigate('admin', 'add-music')}
             className="flex items-center gap-2 px-6 py-2.5 bg-white text-black rounded-xl font-medium hover:bg-zinc-200 transition-colors"
           >
             <CirclePlus className="w-4 h-4" />

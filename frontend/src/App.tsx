@@ -34,7 +34,6 @@ const SettingsView = lazy(() => import('@/views/SettingsView'));
 const SearchView = lazy(() => import('@/views/SearchView'));
 const AdminView = lazy(() => import('@/views/AdminView'));
 const AlbumsView = lazy(() => import('@/views/AlbumsView'));
-const AddMusicView = lazy(() => import('@/views/AddMusicView'));
 // Panels are only needed once opened
 const LyricsPanel = lazy(() => import('@/components/player/LyricsPanel'));
 const QueuePanel = lazy(() => import('@/components/player/QueuePanel'));
@@ -65,8 +64,6 @@ const PageContent = () => {
       return <AlbumsView />;
     case 'admin':
       return isAdmin ? <AdminView /> : <HomeView />;
-    case 'add-music':
-      return isAdmin ? <AddMusicView /> : <HomeView />;
     default:
       return <HomeView />;
   }

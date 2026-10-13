@@ -132,9 +132,22 @@ export const assistantMessages = sqliteTable('assistant_messages', {
   conversationId: text('conversation_id').notNull().references(() => assistantConversations.id, { onDelete: 'cascade' }),
   role: text('role').notNull(), // 'user' | 'assistant' (API roles; tool results are 'user' messages)
   content: text('content').notNull(), // JSON: Anthropic message content blocks
+  // Token usage of the model call that produced an assistant message, for the Usage tab.
+  // input_tokens excludes cached tokens (rows from before 0012 include them).
+  model: text('model'),
   inputTokens: integer('input_tokens'),
+  cacheReadTokens: integer('cache_read_tokens'),
+  cacheWriteTokens: integer('cache_write_tokens'),
   outputTokens: integer('output_tokens'),
+  webSearches: integer('web_searches'),
   createdAt: integer('created_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
+});
+
+// Small key/value store for admin settings (e.g. the API credit balance entered on the Usage tab)
+export const appSettings = sqliteTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
 });
 
 // Type exports for use in the app

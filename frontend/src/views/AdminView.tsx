@@ -1,15 +1,37 @@
-import { useState, useEffect, FormEvent } from 'react';
-import { Users, Music, ListMusic, Ticket, Plus, Trash2, Copy, Check, X, RefreshCw, ToggleLeft, ToggleRight, Terminal, Fingerprint, Activity } from 'lucide-react';
+import { useState, useEffect, lazy, Suspense, FormEvent } from 'react';
+import { Users, Music, ListMusic, Ticket, Plus, Trash2, Copy, Check, X, RefreshCw, ToggleLeft, ToggleRight, Terminal, Fingerprint, Activity, CirclePlus, Sparkles, Gauge, LayoutGrid } from 'lucide-react';
 import { api, AdminStats, AdminUser, InviteCode } from '@/services/api';
 import { toast } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
+import { useAssistantStore } from '@/stores/assistantStore';
+import { navigate, useRoute } from '@/utils/router';
+import type { AdminTab } from '@/types';
+import LoadingSpinner from '@/components/ui/LoadingSpinner';
+
+// Tool tabs load only when opened
+const AddMusicView = lazy(() => import('@/views/AddMusicView'));
+const AssistantChat = lazy(() => import('@/components/AssistantPanel').then((m) => ({ default: m.AssistantChat })));
+const UsagePanel = lazy(() => import('@/components/admin/UsagePanel'));
+
+const TABS: { id: AdminTab; label: string; icon: React.FC<{ className?: string }> }[] = [
+  { id: 'overview', label: 'Overview', icon: LayoutGrid },
+  { id: 'users', label: 'Users', icon: Users },
+  { id: 'invites', label: 'Invite Codes', icon: Ticket },
+  { id: 'add-music', label: 'Add music', icon: CirclePlus },
+  { id: 'assistant', label: 'Assistant', icon: Sparkles },
+  { id: 'usage', label: 'Usage', icon: Gauge },
+  { id: 'maintenance', label: 'Maintenance', icon: Terminal },
+];
+const DATA_TABS: AdminTab[] = ['overview', 'users', 'invites', 'maintenance'];
 
 const AdminView = () => {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [inviteCodes, setInviteCodes] = useState<InviteCode[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'invites' | 'debug'>('overview');
+  const activeTab: AdminTab = useRoute().adminTab ?? 'overview';
+  const setActiveTab = (tab: AdminTab) => navigate('admin', tab);
+  const isDataTab = DATA_TABS.includes(activeTab);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
@@ -45,6 +67,11 @@ const AdminView = () => {
   useEffect(() => {
     loadData();
   }, []);
+
+  // The Assistant tab shows the same conversation, so the side panel would only duplicate it
+  useEffect(() => {
+    if (activeTab === 'assistant') useAssistantStore.getState().close();
+  }, [activeTab]);
 
   const handleCopyCode = (code: string) => {
     navigator.clipboard.writeText(code);
@@ -157,7 +184,7 @@ const AdminView = () => {
     });
   };
 
-  if (isLoading) {
+  if (isLoading && !stats && isDataTab) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="flex items-center gap-3 text-zinc-400">
@@ -175,32 +202,43 @@ const AdminView = () => {
           <h2 className="text-sm font-medium text-amber-500 uppercase tracking-widest mb-1">Administration</h2>
           <h1 className="text-4xl font-semibold text-white tracking-tight">Admin Panel</h1>
         </div>
-        <button
+        {isDataTab && <button
           onClick={loadData}
           className="flex items-center gap-2 px-4 py-2 rounded-xl border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700 transition-all"
         >
-          <RefreshCw className="w-4 h-4" />
+          <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
           Refresh
-        </button>
+        </button>}
       </header>
 
       {/* Tab Navigation */}
-      <div className="flex gap-2 mb-8 border-b border-zinc-800 pb-4">
-        {(['overview', 'users', 'invites', 'debug'] as const).map((tab) => (
+      <div className="flex gap-2 mb-8 border-b border-zinc-800 pb-4 overflow-x-auto -mx-1 px-1">
+        {TABS.map(({ id, label, icon: Icon }) => (
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 rounded-lg font-medium text-sm transition-all flex items-center gap-1.5 ${
-              activeTab === tab
+            key={id}
+            onClick={() => setActiveTab(id)}
+            aria-current={activeTab === id ? 'page' : undefined}
+            className={`px-4 py-2 rounded-lg font-medium text-sm transition-all flex items-center gap-1.5 whitespace-nowrap flex-shrink-0 ${
+              activeTab === id
                 ? 'bg-zinc-800 text-white'
                 : 'text-zinc-500 hover:text-white hover:bg-zinc-800/50'
             }`}
           >
-            {tab === 'debug' && <Terminal className="w-3.5 h-3.5" />}
-            {tab === 'overview' ? 'Overview' : tab === 'users' ? 'Users' : tab === 'invites' ? 'Invite Codes' : 'Maintenance'}
+            <Icon className="w-3.5 h-3.5" />
+            {label}
           </button>
         ))}
       </div>
+
+      <Suspense fallback={<div className="flex justify-center py-16"><LoadingSpinner /></div>}>
+        {activeTab === 'add-music' && <AddMusicView />}
+        {activeTab === 'assistant' && (
+          <div className="h-[calc(100dvh-300px)] min-h-[420px] flex flex-col rounded-2xl border border-zinc-800/50 bg-zinc-950/60 overflow-hidden">
+            <AssistantChat inline />
+          </div>
+        )}
+        {activeTab === 'usage' && <UsagePanel />}
+      </Suspense>
 
       {/* Overview Tab */}
       {activeTab === 'overview' && stats && (
@@ -417,7 +455,7 @@ const AdminView = () => {
       )}
 
       {/* Debug Tab */}
-      {activeTab === 'debug' && (
+      {activeTab === 'maintenance' && (
         <div className="space-y-6">
           <div className="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6">
             <div className="flex items-start justify-between">

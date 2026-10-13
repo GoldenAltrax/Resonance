@@ -2,6 +2,9 @@ import { useEffect, useRef } from 'react';
 import { usePlayerStore } from '@/stores/playerStore';
 import { usePlaybackStore } from '@/stores/playbackStore';
 import { toast } from '@/stores/toastStore';
+import { useAuthStore } from '@/stores/authStore';
+import { useAssistantStore } from '@/stores/assistantStore';
+import { navigate } from '@/utils/router';
 
 interface UseKeyboardShortcutsOptions {
   onOpenHelp?: () => void;
@@ -87,6 +90,16 @@ export const useKeyboardShortcuts = (options?: UseKeyboardShortcutsOptions) => {
           toast.info(labels[usePlayerStore.getState().repeat]);
           break;
         }
+        // Admin only
+        case 'a':
+          if (useAuthStore.getState().user?.isAdmin) {
+            event.preventDefault(); // keep the "a" out of the chat input that gets focused
+            useAssistantStore.getState().toggle();
+          }
+          break;
+        case 'd':
+          if (useAuthStore.getState().user?.isAdmin) navigate('admin', 'add-music');
+          break;
         case '?':
           event.preventDefault();
           onOpenHelpRef.current?.();
@@ -114,4 +127,9 @@ export const KEYBOARD_SHORTCUTS = [
   { key: 'Shift + ↑', action: 'Volume up' },
   { key: 'Shift + ↓', action: 'Volume down' },
   { key: '?', action: 'Show keyboard shortcuts' },
+];
+
+export const ADMIN_KEYBOARD_SHORTCUTS = [
+  { key: 'A', action: 'Open / Close assistant' },
+  { key: 'D', action: 'Add music' },
 ];

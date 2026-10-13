@@ -404,6 +404,16 @@ class ApiClient {
     return this.request<{ id: string; items: AssistantItem[] }>('/assistant/conversation');
   }
 
+  async getAssistantUsage() {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return this.request<AssistantUsage>(`/assistant/usage?tz=${encodeURIComponent(tz)}`);
+  }
+
+  /** Current Anthropic credit balance in dollars, or null to stop tracking it. */
+  async setAssistantCredit(amount: number | null) {
+    return this.request<AssistantUsage>('/assistant/credit', { method: 'PUT', body: JSON.stringify({ amount }) });
+  }
+
   async newAssistantConversation() {
     return this.request<{ id: string; items: AssistantItem[] }>('/assistant/conversation/new', { method: 'POST' });
   }
@@ -673,5 +683,39 @@ export type AssistantEvent =
   | { type: 'step_done'; id: string; summary: string; ok: boolean; changed: Array<'downloads' | 'playlists' | 'library'> }
   | { type: 'done' }
   | { type: 'error'; error: string };
+
+export interface UsageTotals {
+  calls: number;
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  outputTokens: number;
+  cost: number;
+  webSearches: number;
+}
+
+export interface AssistantUsage {
+  model: string;
+  pricing: { input: number; cacheWrite: number; cacheRead: number; output: number } | null;
+  timeZone: string;
+  periods: { today: UsageTotals; month: UsageTotals; last30: UsageTotals; all: UsageTotals };
+  messagesSent: { today: number; month: number; last30: number; all: number };
+  days: Array<{ date: string; cost: number }>;
+  unpricedCalls: number;
+  credit: { amount: number; setAt: string; spent: number; remaining: number } | null;
+  tavily:
+    | { configured: false }
+    | { configured: true; error: string }
+    | {
+        configured: true;
+        plan: string | null;
+        planUsage: number | null;
+        planLimit: number | null;
+        paygoUsage: number | null;
+        paygoLimit: number | null;
+        keyUsage: number | null;
+        keyLimit: number | null;
+      };
+}
 
 export const api = new ApiClient();

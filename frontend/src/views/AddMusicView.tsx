@@ -222,13 +222,10 @@ const AddMusicView = () => {
   const finishedTotal = (counts.done ?? 0) + (counts.skipped ?? 0) + failedCount;
 
   return (
-    <div className="max-w-6xl">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold text-white mb-1">Add music</h1>
-        <p className="text-zinc-500 text-sm">
-          Search for a song or album, or paste a link from YouTube, YouTube Music, Spotify, Apple Music or Deezer.
-        </p>
-      </div>
+    <div>
+      <p className="mb-6 text-zinc-500 text-sm">
+        Search for a song or album, or paste a link from YouTube, YouTube Music, Spotify, Apple Music or Deezer.
+      </p>
 
       {downloader && !downloader.available && (
         <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">

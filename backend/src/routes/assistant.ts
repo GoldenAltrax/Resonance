@@ -6,6 +6,7 @@ import { asc, desc, eq, sql } from 'drizzle-orm';
 import { db, assistantConversations, assistantMessages, users } from '../db/index.js';
 import { adminMiddleware } from '../middleware/auth.js';
 import { runTool, toolDefinitions, toolLabel, webSearchEnabled } from '../services/assistantTools.js';
+import { usageReport, setCredit } from '../services/assistantUsage.js';
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 const MODEL = process.env.ASSISTANT_MODEL || 'claude-haiku-5-5';
@@ -89,13 +90,20 @@ function recentHistory(all: Array<{ role: 'user' | 'assistant'; content: StoredC
 }
 
 function saveMessage(conversationId: string, role: 'user' | 'assistant', content: StoredContent, usage?: Anthropic.Usage) {
+  const blocks = typeof content === 'string' ? [] : content;
   db.insert(assistantMessages).values({
     id: uuidv4(),
     conversationId,
     role,
     content: JSON.stringify(content),
-    inputTokens: usage ? usage.input_tokens + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) : null,
-    outputTokens: usage?.output_tokens ?? null,
+    ...(usage ? {
+      model: MODEL,
+      inputTokens: usage.input_tokens,
+      cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+      outputTokens: usage.output_tokens,
+      webSearches: blocks.filter((b) => b.type === 'tool_use' && b.name === 'web_search').length,
+    } : {}),
   }).run();
 }
 
@@ -153,6 +161,19 @@ export async function assistantRoutes(app: FastifyInstance) {
 
   app.get('/status', async (_request: FastifyRequest, reply: FastifyReply) => {
     return reply.send({ enabled: Boolean(client), model: MODEL, webSearch: webSearchEnabled() });
+  });
+
+  // Spend and token counts for the admin Usage tab
+  app.get('/usage', async (request: FastifyRequest<{ Querystring: { tz?: string } }>, reply: FastifyReply) => {
+    return reply.send(await usageReport(MODEL, request.query.tz));
+  });
+
+  // Anthropic has no balance API: the admin enters the current balance and spend is subtracted from it
+  app.put('/credit', async (request: FastifyRequest, reply: FastifyReply) => {
+    const parsed = z.object({ amount: z.number().min(0).max(100_000).nullable() }).safeParse(request.body);
+    if (!parsed.success) return reply.status(400).send({ error: 'Enter an amount in dollars' });
+    setCredit(parsed.data.amount);
+    return reply.send(await usageReport(MODEL));
   });
 
   app.get('/conversation', async (request: FastifyRequest, reply: FastifyReply) => {

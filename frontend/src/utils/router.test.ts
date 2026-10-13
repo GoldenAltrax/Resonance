@@ -17,6 +17,13 @@ describe('router', () => {
     expect(parseRoute(pathFor('playlist-detail', id))).toEqual({ page: 'playlist-detail', playlistId: id });
   });
 
+  it('maps admin tabs, including the old Add music path', () => {
+    expect(parseRoute(pathFor('admin', 'usage'))).toEqual({ page: 'admin', adminTab: 'usage' });
+    expect(pathFor('admin', 'overview')).toBe('/admin');
+    expect(parseRoute('/add')).toEqual({ page: 'admin', adminTab: 'add-music' });
+    expect(parseRoute('/admin/nope')).toEqual({ page: 'home' });
+  });
+
   it('falls back to home for unknown paths', () => {
     expect(parseRoute('/nope')).toEqual({ page: 'home' });
   });

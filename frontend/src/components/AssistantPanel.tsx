@@ -98,8 +98,9 @@ function Item({ item, pending }: { item: AssistantItem; pending: boolean }) {
   );
 }
 
-const AssistantPanel = () => {
-  const { isOpen, enabled, webSearch, items, isSending, error, close, send, stop, startOver } = useAssistantStore();
+/** The conversation itself: used in the side panel and in the Admin Panel's Assistant tab. */
+export const AssistantChat = ({ inline = false }: { inline?: boolean }) => {
+  const { enabled, webSearch, items, isSending, error, close, send, stop, startOver, load } = useAssistantStore();
   const isDesktop = useMediaQuery('(min-width: 768px)');
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -112,15 +113,9 @@ const AssistantPanel = () => {
   }, [items, isSending]);
 
   useEffect(() => {
-    if (isOpen && isDesktop) inputRef.current?.focus();
-  }, [isOpen, isDesktop]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [isOpen, close]);
+    if (!useAssistantStore.getState().loaded) void load();
+    if (isDesktop) inputRef.current?.focus();
+  }, [load, isDesktop]);
 
   // Grow the input with its content, up to a few lines
   useEffect(() => {
@@ -129,8 +124,6 @@ const AssistantPanel = () => {
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
   }, [draft]);
-
-  if (!isOpen) return null;
 
   const submit = (text = draft) => {
     if (!text.trim() || isSending) return;
@@ -142,15 +135,7 @@ const AssistantPanel = () => {
   const thinking = isSending && (!last || last.kind === 'user' || (last.kind === 'step' && Boolean(last.summary)));
 
   return (
-    <div
-      className={isDesktop
-        ? 'fixed top-0 right-0 bottom-24 z-40'
-        : 'fixed inset-0 z-[70]'}
-    >
-      <div
-        className={`${isDesktop ? 'w-[400px] border-l border-zinc-800/50 shadow-2xl' : 'w-full'} h-full bg-[#0a0a0a] flex flex-col`}
-        style={{ animation: 'slideInFromRight 0.3s ease-out', paddingTop: isDesktop ? undefined : 'env(safe-area-inset-top)' }}
-      >
+    <>
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800/50">
           <div className="flex items-center gap-3">
@@ -171,13 +156,15 @@ const AssistantPanel = () => {
                 <RotateCcw className="w-4 h-4" />
               </button>
             )}
-            <button
-              onClick={close}
-              className="p-2 rounded-lg text-zinc-500 hover:text-white hover:bg-zinc-800/50 transition-colors"
-              aria-label="Close assistant"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            {!inline && (
+              <button
+                onClick={close}
+                className="p-2 rounded-lg text-zinc-500 hover:text-white hover:bg-zinc-800/50 transition-colors"
+                aria-label="Close assistant"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -219,7 +206,7 @@ const AssistantPanel = () => {
         </div>
 
         {/* Input */}
-        <div className="px-4 pt-3 border-t border-zinc-800/50" style={{ paddingBottom: isDesktop ? '1rem' : 'calc(1rem + env(safe-area-inset-bottom))' }}>
+        <div className="px-4 pt-3 border-t border-zinc-800/50" style={{ paddingBottom: isDesktop || inline ? '1rem' : 'calc(1rem + env(safe-area-inset-bottom))' }}>
           <div className="flex items-end gap-2 rounded-2xl bg-zinc-900 border border-zinc-800 focus-within:border-zinc-700 px-3 py-2 transition-colors">
             <textarea
               ref={inputRef}
@@ -257,6 +244,28 @@ const AssistantPanel = () => {
             )}
           </div>
         </div>
+    </>
+  );
+};
+
+/** Slide-in panel on the right (full screen on phones), opened with the A shortcut. */
+const AssistantPanel = () => {
+  const close = useAssistantStore((s) => s.close);
+  const isDesktop = useMediaQuery('(min-width: 768px)');
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [close]);
+
+  return (
+    <div className={isDesktop ? 'fixed top-0 right-0 bottom-24 z-40' : 'fixed inset-0 z-[70]'}>
+      <div
+        className={`${isDesktop ? 'w-[400px] border-l border-zinc-800/50 shadow-2xl' : 'w-full'} h-full bg-[#0a0a0a] flex flex-col`}
+        style={{ animation: 'slideInFromRight 0.3s ease-out', paddingTop: isDesktop ? undefined : 'env(safe-area-inset-top)' }}
+      >
+        <AssistantChat />
       </div>
     </div>
   );

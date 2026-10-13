@@ -1,4 +1,6 @@
-export type Page = 'home' | 'library' | 'liked' | 'playlists' | 'playlist-detail' | 'search' | 'settings' | 'admin' | 'albums' | 'add-music';
+export type Page = 'home' | 'library' | 'liked' | 'playlists' | 'playlist-detail' | 'search' | 'settings' | 'admin' | 'albums';
+
+export type AdminTab = 'overview' | 'users' | 'invites' | 'add-music' | 'assistant' | 'usage' | 'maintenance';
 
 export interface Song {
   id: string;

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { X, Keyboard } from 'lucide-react';
+import { useAuthStore } from '@/stores/authStore';
 
 interface KeyboardShortcutsModalProps {
   isOpen: boolean;
@@ -14,6 +15,7 @@ const shortcuts = [
   { key: 'S', description: 'Toggle shuffle' },
   { key: 'R', description: 'Cycle repeat mode' },
   { key: 'L', description: 'Show / Hide lyrics' },
+  { key: 'Q', description: 'Show / Hide queue' },
   { key: '\u2190', description: 'Seek backward 10 seconds', label: 'Left Arrow' },
   { key: '\u2192', description: 'Seek forward 10 seconds', label: 'Right Arrow' },
   { key: 'Shift + \u2191', description: 'Increase volume', label: 'Shift + Up' },
@@ -21,8 +23,14 @@ const shortcuts = [
   { key: '?', description: 'Show keyboard shortcuts' },
 ];
 
+const adminShortcuts = [
+  { key: 'A', description: 'Open / Close assistant (admin)' },
+  { key: 'D', description: 'Add music (admin)' },
+];
+
 const KeyboardShortcutsModal = ({ isOpen, onClose }: KeyboardShortcutsModalProps) => {
   const modalRef = useRef<HTMLDivElement>(null);
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -95,7 +103,7 @@ const KeyboardShortcutsModal = ({ isOpen, onClose }: KeyboardShortcutsModalProps
         {/* Content */}
         <div className="p-6 overflow-y-auto">
           <div className="space-y-3">
-            {shortcuts.map(({ key, description, label }) => (
+            {(isAdmin ? [...shortcuts, ...adminShortcuts] : shortcuts).map(({ key, description, label }: { key: string; description: string; label?: string }) => (
               <div
                 key={key}
                 className="flex items-center justify-between py-2 border-b border-zinc-800/50 last:border-0"

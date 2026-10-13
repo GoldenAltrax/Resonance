@@ -22,6 +22,7 @@ interface AssistantState {
 }
 
 let controller: AbortController | null = null;
+let loading: Promise<void> | null = null;
 
 export const useAssistantStore = create<AssistantState>((set, get) => ({
   isOpen: false,
@@ -41,7 +42,7 @@ export const useAssistantStore = create<AssistantState>((set, get) => ({
   close: () => set({ isOpen: false }),
   toggle: () => (get().isOpen ? get().close() : get().open()),
 
-  load: async () => {
+  load: () => (loading ??= (async () => {
     try {
       const status = await api.getAssistantStatus();
       set({ enabled: status.enabled, webSearch: status.webSearch });
@@ -50,8 +51,10 @@ export const useAssistantStore = create<AssistantState>((set, get) => ({
       set({ items, loaded: true, error: null });
     } catch {
       set({ error: 'Could not reach the assistant.' });
+    } finally {
+      loading = null;
     }
-  },
+  })()),
 
   send: async (message) => {
     const text = message.trim();
