@@ -3,6 +3,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { usePlaylistStore } from '@/stores/playlistStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useNetworkStore } from '@/stores/networkStore';
+import { useAssistantStore } from '@/stores/assistantStore';
 import { api } from '@/services/api';
 import { useRoute, useMediaQuery } from '@/utils/router';
 
@@ -22,6 +23,7 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { useAudioPlayer } from '@/hooks/useAudioPlayer';
 import BottomNav from '@/components/mobile/BottomNav';
 import MobilePlayerBar from '@/components/mobile/MobilePlayerBar';
+import { Sparkles } from 'lucide-react';
 
 // Route-level code splitting: only Home ships in the initial bundle.
 const LibraryView = lazy(() => import('@/views/LibraryView'));
@@ -39,6 +41,7 @@ const QueuePanel = lazy(() => import('@/components/player/QueuePanel'));
 const EqualizerPanel = lazy(() => import('@/components/player/EqualizerPanel'));
 const NowPlayingScreen = lazy(() => import('@/components/mobile/NowPlayingScreen'));
 const KeyboardShortcutsModal = lazy(() => import('@/components/ui/KeyboardShortcutsModal'));
+const AssistantPanel = lazy(() => import('@/components/AssistantPanel'));
 
 type AuthScreen = 'landing' | 'login' | 'signup';
 
@@ -87,6 +90,8 @@ const App = () => {
   const hasTrack = usePlayerStore((s) => s.currentTrack !== null);
   const sidePanelOpen = usePlayerStore((s) => s.showLyrics || s.showQueue);
   const showEqualizer = usePlayerStore((s) => s.showEqualizer);
+  const isAdmin = useAuthStore((s) => s.user?.isAdmin ?? false);
+  const assistantOpen = useAssistantStore((s) => s.isOpen) && isAdmin;
   const isDesktop = useMediaQuery('(min-width: 768px)');
   const route = useRoute();
   const mainRef = useRef<HTMLElement>(null);
@@ -96,6 +101,11 @@ const App = () => {
   useKeyboardShortcuts({ onOpenHelp: () => setShowShortcutsModal(true) });
 
   useEffect(() => useNetworkStore.getState().startMonitoring(), []);
+
+  // Lyrics, queue and the assistant share the right-hand side: opening one closes the other
+  useEffect(() => {
+    if (sidePanelOpen) useAssistantStore.getState().close();
+  }, [sidePanelOpen]);
 
   useEffect(() => {
     if (!useAuthStore.getState().token) return;
@@ -160,7 +170,7 @@ const App = () => {
           className="flex-1 overflow-y-auto relative h-full transition-[margin] duration-300 ease-out"
           style={
             isDesktop
-              ? { marginRight: sidePanelOpen ? '400px' : '0', paddingBottom: hasTrack ? '96px' : 0 }
+              ? { marginRight: sidePanelOpen || assistantOpen ? '400px' : '0', paddingBottom: hasTrack ? '96px' : 0 }
               : { paddingBottom: mobileBottomPadding }
           }
         >
@@ -194,10 +204,21 @@ const App = () => {
           {!isDesktop && showNowPlaying && (
             <NowPlayingScreen onClose={() => setShowNowPlaying(false)} />
           )}
+          {assistantOpen && <AssistantPanel />}
           {showShortcutsModal && (
             <KeyboardShortcutsModal isOpen onClose={() => setShowShortcutsModal(false)} />
           )}
         </Suspense>
+        {isAdmin && !isDesktop && !assistantOpen && !showNowPlaying && (
+          <button
+            onClick={() => useAssistantStore.getState().open()}
+            className="fixed right-4 z-40 w-11 h-11 rounded-full bg-zinc-800/95 border border-zinc-700/60 text-zinc-200 shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+            style={{ bottom: `calc(${mobileBottomPadding} + 12px)` }}
+            aria-label="Open assistant"
+          >
+            <Sparkles className="w-5 h-5" />
+          </button>
+        )}
         <ToastContainer />
       </div>
     </ErrorBoundary>

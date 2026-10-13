@@ -38,6 +38,7 @@ const { adminRoutes } = await import('./routes/admin.js');
 const { favoriteRoutes } = await import('./routes/favorites.js');
 const { historyRoutes } = await import('./routes/history.js');
 const { downloadRoutes } = await import('./routes/downloads.js');
+const { assistantRoutes } = await import('./routes/assistant.js');
 const { startDownloader } = await import('./services/downloader.js');
 const { sqlite } = await import('./db/index.js');
 
@@ -147,6 +148,7 @@ await app.register(adminRoutes, { prefix: '/api/admin' });
 await app.register(favoriteRoutes, { prefix: '/api/favorites' });
 await app.register(historyRoutes, { prefix: '/api/history' });
 await app.register(downloadRoutes, { prefix: '/api/downloads' });
+await app.register(assistantRoutes, { prefix: '/api/assistant' });
 
 // Health check
 app.get('/api/health', async () => {

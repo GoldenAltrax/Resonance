@@ -43,6 +43,9 @@ services:
       - DOWNLOAD_CONCURRENCY=${DOWNLOAD_CONCURRENCY:-2}
       - ITUNES_COUNTRY=${ITUNES_COUNTRY:-US}
       - YTDLP_ARGS=${YTDLP_ARGS:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ASSISTANT_MODEL=${ASSISTANT_MODEL:-claude-haiku-5-5}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
       interval: 30s

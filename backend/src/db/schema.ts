@@ -119,6 +119,24 @@ export const downloadJobs = sqliteTable('download_jobs', {
   updatedAt: integer('updated_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
 });
 
+// Admin assistant chats. Every message (including tool calls and results) is kept so
+// mistakes can be reviewed later and used to improve the prompt and tools.
+export const assistantConversations = sqliteTable('assistant_conversations', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
+});
+
+export const assistantMessages = sqliteTable('assistant_messages', {
+  id: text('id').primaryKey(),
+  conversationId: text('conversation_id').notNull().references(() => assistantConversations.id, { onDelete: 'cascade' }),
+  role: text('role').notNull(), // 'user' | 'assistant' (API roles; tool results are 'user' messages)
+  content: text('content').notNull(), // JSON: Anthropic message content blocks
+  inputTokens: integer('input_tokens'),
+  outputTokens: integer('output_tokens'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
+});
+
 // Type exports for use in the app
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
@@ -135,6 +153,7 @@ export type NewFavorite = typeof favorites.$inferInsert;
 export type PlayHistory = typeof playHistory.$inferSelect;
 export type NewPlayHistory = typeof playHistory.$inferInsert;
 export type DownloadJob = typeof downloadJobs.$inferSelect;
+export type AssistantMessage = typeof assistantMessages.$inferSelect;
 export type TrackSkip = typeof trackSkips.$inferSelect;
 export type NewTrackSkip = typeof trackSkips.$inferInsert;
 

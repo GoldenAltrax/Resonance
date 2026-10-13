@@ -38,7 +38,7 @@ export function findInLibrary(title: string, artist: string | null): string | nu
   return libraryIndex().get(songKey(title, artist)) ?? null;
 }
 
-function addToPlaylist(playlistId: string, trackId: string, position: number | null) {
+export function addToPlaylist(playlistId: string, trackId: string, position: number | null) {
   const exists = db.select({ id: playlistTracks.id }).from(playlistTracks)
     .where(and(eq(playlistTracks.playlistId, playlistId), eq(playlistTracks.trackId, trackId))).get();
   if (exists) return;

@@ -395,6 +395,53 @@ class ApiClient {
     return this.request<{ ytdlpVersion: string | null }>('/downloads/update-downloader', { method: 'POST' });
   }
 
+  // Assistant (admin)
+  async getAssistantStatus() {
+    return this.request<{ enabled: boolean; model: string; webSearch: boolean }>('/assistant/status');
+  }
+
+  async getAssistantConversation() {
+    return this.request<{ id: string; items: AssistantItem[] }>('/assistant/conversation');
+  }
+
+  async newAssistantConversation() {
+    return this.request<{ id: string; items: AssistantItem[] }>('/assistant/conversation/new', { method: 'POST' });
+  }
+
+  /** Sends a message and reports the streamed reply event by event. Resolves when the reply ends. */
+  async streamAssistant(message: string, onEvent: (event: AssistantEvent) => void, signal?: AbortSignal) {
+    const response = await fetch(`${API_URL}/assistant/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+      },
+      body: JSON.stringify({ message }),
+      signal,
+    });
+    if (!response.ok || !response.body) {
+      if (response.status === 401 && this.token) this.onSessionExpired?.();
+      const body: ApiErrorBody = await response.json().catch(() => ({ error: 'An error occurred' }));
+      throw new HttpError(response.status, body);
+    }
+
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += value;
+      let end: number;
+      while ((end = buffer.indexOf('\n\n')) !== -1) {
+        const chunk = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        if (chunk.startsWith('data: ')) {
+          try { onEvent(JSON.parse(chunk.slice(6)) as AssistantEvent); } catch { /* ignore malformed */ }
+        }
+      }
+    }
+  }
+
   async deleteUser(id: string) {
     return this.request<{ playlists: number; tracksKept: number }>('/admin/users/' + id, {
       method: 'DELETE',
@@ -614,5 +661,17 @@ export interface HistoryEntry {
   playedAt: string;
   track: Track;
 }
+
+export type AssistantItem =
+  | { kind: 'user'; text: string }
+  | { kind: 'assistant'; text: string }
+  | { kind: 'step'; id: string; label: string; summary: string; ok: boolean };
+
+export type AssistantEvent =
+  | { type: 'text'; text: string }
+  | { type: 'step'; id: string; label: string }
+  | { type: 'step_done'; id: string; summary: string; ok: boolean; changed: Array<'downloads' | 'playlists' | 'library'> }
+  | { type: 'done' }
+  | { type: 'error'; error: string };
 
 export const api = new ApiClient();
