@@ -7,6 +7,7 @@ import { api, HistoryEntry } from '@/services/api';
 import { formatDuration, formatTimeAgo } from '@/utils/time';
 import { navigate } from '@/utils/router';
 import { playlistCoverUrl } from '@/utils/cover';
+import { trackMenuProps, TRACK_ROW_TOUCH_CLASSES } from '@/utils/trackMenu';
 
 const HomeView = () => {
   const user = useAuthStore((s) => s.user);
@@ -126,7 +127,8 @@ const HomeView = () => {
                 <button
                   key={entry.id}
                   onClick={() => handlePlayHistoryTrack(entry)}
-                  className="group text-left p-2.5 bg-zinc-900/30 hover:bg-zinc-800/50 rounded-xl transition-all duration-200"
+                  {...trackMenuProps(entry.track)}
+                  className={`${TRACK_ROW_TOUCH_CLASSES} group text-left p-2.5 bg-zinc-900/30 hover:bg-zinc-800/50 rounded-xl transition-all duration-200`}
                 >
                   <div className="aspect-square bg-zinc-800/80 rounded-lg overflow-hidden mb-2.5 relative">
                     {coverUrl ? (
@@ -268,7 +270,8 @@ const HomeView = () => {
                   <button
                     key={track.id}
                     onClick={() => play(track, recentTracks)}
-                    className="flex items-center gap-3.5 p-3 bg-zinc-900/30 hover:bg-zinc-800/50 rounded-xl transition-all duration-200 group text-left"
+                    {...trackMenuProps(track)}
+                    className={`${TRACK_ROW_TOUCH_CLASSES} flex items-center gap-3.5 p-3 bg-zinc-900/30 hover:bg-zinc-800/50 rounded-xl transition-all duration-200 group text-left`}
                   >
                     <div className="w-10 h-10 bg-zinc-800 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden">
                       {coverUrl ? (

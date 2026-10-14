@@ -72,3 +72,7 @@ graphify-out/
 
 # Server backups (scripts/backup.sh)
 backups/
+
+# Server data (docker-compose bind mounts at the repo root)
+/data/
+/uploads/

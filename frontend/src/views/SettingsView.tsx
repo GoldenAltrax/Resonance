@@ -175,7 +175,12 @@ const SettingsView = () => {
 
     setIsChangingPassword(true);
     try {
-      await api.changePassword(currentPassword, newPassword);
+      const { token } = await api.changePassword(currentPassword, newPassword);
+      // The server signs out other devices and hands this one a fresh token
+      if (token) {
+        api.setToken(token);
+        useAuthStore.setState({ token });
+      }
       setShowSecurityModal(false);
       setCurrentPassword('');
       setNewPassword('');

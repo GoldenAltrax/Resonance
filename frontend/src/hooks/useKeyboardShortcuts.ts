@@ -5,6 +5,7 @@ import { toast } from '@/stores/toastStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useAssistantStore } from '@/stores/assistantStore';
 import { navigate } from '@/utils/router';
+import { useTrackMenuStore } from '@/stores/trackMenuStore';
 
 interface UseKeyboardShortcutsOptions {
   onOpenHelp?: () => void;
@@ -30,6 +31,8 @@ export const useKeyboardShortcuts = (options?: UseKeyboardShortcutsOptions) => {
       ) {
         return;
       }
+      // The track menu handles its own keys (arrows, Escape) while open
+      if (useTrackMenuStore.getState().track) return;
 
       const player = usePlayerStore.getState();
       const { progress, duration } = usePlaybackStore.getState();
@@ -37,8 +40,8 @@ export const useKeyboardShortcuts = (options?: UseKeyboardShortcutsOptions) => {
 
       switch (key) {
         case ' ':
-          // Let focused buttons handle Space themselves
-          if (target.tagName === 'BUTTON' || target.getAttribute('role') === 'slider') return;
+          // Let focused buttons (and button-like rows) handle Space themselves
+          if (target.tagName === 'BUTTON' || ['slider', 'button', 'menuitem'].includes(target.getAttribute('role') ?? '')) return;
           event.preventDefault();
           if (player.currentTrack) player.togglePlay();
           break;

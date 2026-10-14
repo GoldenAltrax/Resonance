@@ -9,6 +9,7 @@
  */
 import { v4 as uuidv4 } from 'uuid';
 import { join } from 'path';
+import { readdir, unlink } from 'fs/promises';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { db, downloadJobs, playlistTracks, tracks, type DownloadJob } from '../db/index.js';
 import { ingestAudioFile, TEMP_DIR } from './ingest.js';
@@ -145,9 +146,17 @@ function pump() {
       })
       .finally(() => {
         running--;
+        void removeLeftovers(job.id);
         pump();
       });
   }
+}
+
+/** Deletes yt-dlp files a failed job left behind (partial .part files, a download that never got imported). */
+async function removeLeftovers(jobId: string) {
+  const prefix = `dl-${jobId}`;
+  const names = await readdir(TEMP_DIR).catch(() => [] as string[]);
+  await Promise.all(names.filter((n) => n.startsWith(prefix)).map((n) => unlink(join(TEMP_DIR, n)).catch(() => {})));
 }
 
 async function findSource(job: DownloadJob): Promise<string> {

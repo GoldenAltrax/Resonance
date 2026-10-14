@@ -4,7 +4,7 @@ import bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { db, users, inviteCodes } from '../db/index.js';
 import { eq, and, or, isNull, gt, sql } from 'drizzle-orm';
-import { isAdmin } from '../middleware/auth.js';
+import { isAdmin, authMiddleware } from '../middleware/auth.js';
 
 // Password must be 8+ chars with at least: 1 uppercase, 1 lowercase, 1 number
 const passwordSchema = z.string()
@@ -91,6 +91,21 @@ export async function authRoutes(app: FastifyInstance) {
         }
       }
 
+      // Claim one use of the invite code atomically: the check above and this increment are
+      // separate statements, so concurrent signups could otherwise exceed maxUses
+      if (validInviteCode) {
+        const claimed = db.update(inviteCodes)
+          .set({ usedCount: sql`${inviteCodes.usedCount} + 1` })
+          .where(and(
+            eq(inviteCodes.id, validInviteCode.id),
+            or(isNull(inviteCodes.maxUses), gt(inviteCodes.maxUses, inviteCodes.usedCount)),
+          ))
+          .run();
+        if (claimed.changes === 0) {
+          return reply.status(403).send({ error: 'Invalid or expired invitation code' });
+        }
+      }
+
       // Hash password
       const passwordHash = await bcrypt.hash(body.password, 12);
 
@@ -102,13 +117,6 @@ export async function authRoutes(app: FastifyInstance) {
         email: body.email,
         passwordHash,
       });
-
-      // Increment invite code usage atomically using SQL (prevents race condition)
-      if (validInviteCode) {
-        await db.update(inviteCodes)
-          .set({ usedCount: sql`${inviteCodes.usedCount} + 1` })
-          .where(eq(inviteCodes.id, validInviteCode.id));
-      }
 
       // Generate token
       // JWT expires in 7 days
@@ -183,13 +191,7 @@ export async function authRoutes(app: FastifyInstance) {
 
   // Get current user
   app.get('/me', {
-    preHandler: async (request, reply) => {
-      try {
-        await request.jwtVerify();
-      } catch (err) {
-        return reply.status(401).send({ error: 'Unauthorized' });
-      }
-    },
+    preHandler: authMiddleware,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const decoded = request.user as { userId: string };
 
@@ -228,13 +230,7 @@ export async function authRoutes(app: FastifyInstance) {
         timeWindow: '1 minute',
       },
     },
-    preHandler: async (request, reply) => {
-      try {
-        await request.jwtVerify();
-      } catch (err) {
-        return reply.status(401).send({ error: 'Unauthorized' });
-      }
-    },
+    preHandler: authMiddleware,
   }, async (request: FastifyRequest, reply: FastifyReply) => {
     const changePasswordSchema = z.object({
       currentPassword: z.string(),
@@ -262,12 +258,15 @@ export async function authRoutes(app: FastifyInstance) {
       // Hash new password
       const newPasswordHash = await bcrypt.hash(body.newPassword, 12);
 
-      // Update password
+      // Update password; tokens issued before now stop working (signs out other devices)
+      const now = new Date();
       await db.update(users)
-        .set({ passwordHash: newPasswordHash, updatedAt: new Date() })
+        .set({ passwordHash: newPasswordHash, passwordChangedAt: now, updatedAt: now })
         .where(eq(users.id, userId));
 
-      return reply.send({ message: 'Password changed successfully' });
+      // Fresh token so this device stays signed in
+      const token = app.jwt.sign({ userId: user.id, username: user.username }, { expiresIn: '7d' });
+      return reply.send({ message: 'Password changed successfully', token });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return reply.status(400).send({ error: 'Invalid input', details: error.errors });

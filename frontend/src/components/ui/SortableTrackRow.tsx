@@ -1,12 +1,8 @@
-import { useState, useRef } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Play, MoreHorizontal, GripVertical, Heart, Trash2, ListPlus, ListEnd, ListStart, Check } from 'lucide-react';
-import { Track, Playlist, api } from '@/services/api';
-import { playlistCoverUrl } from '@/utils/cover';
-import { useFavoritesStore } from '@/stores/favoritesStore';
-import { usePlayerStore } from '@/stores/playerStore';
-import { toast } from '@/stores/toastStore';
+import { Play, MoreHorizontal, GripVertical, Check } from 'lucide-react';
+import { Track, api } from '@/services/api';
+import { trackMenuProps, openTrackMenuFromButton, TRACK_ROW_TOUCH_CLASSES } from '@/utils/trackMenu';
 
 interface SortableTrackRowProps {
   track: Track;
@@ -16,9 +12,8 @@ interface SortableTrackRowProps {
   onPlay: () => void;
   formatDuration: (seconds: number) => string;
   onRemoveFromPlaylist?: () => void;
-  onAddToOtherPlaylist?: (track: Track) => void;
-  playlists?: Playlist[];
   currentPlaylistId?: string;
+  dragDisabled?: boolean;
   isSelected?: boolean;
   onSelect?: () => void;
 }
@@ -31,68 +26,12 @@ const SortableTrackRow = ({
   onPlay,
   formatDuration,
   onRemoveFromPlaylist,
-  onAddToOtherPlaylist,
-  playlists = [],
   currentPlaylistId,
+  dragDisabled = false,
   isSelected = false,
   onSelect,
 }: SortableTrackRowProps) => {
-  const [showMenu, setShowMenu] = useState(false);
-  const [showPlaylistSubmenu, setShowPlaylistSubmenu] = useState(false);
-  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
-  const menuButtonRef = useRef<HTMLButtonElement>(null);
-  const { isFavorited, toggleFavorite } = useFavoritesStore();
-  // Actions only: stable references, no subscription
-  const { addToQueue, playNext } = usePlayerStore.getState();
-
-  const toggleMenu = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (showMenu) {
-      setShowMenu(false);
-      setShowPlaylistSubmenu(false);
-      setMenuPosition(null);
-      return;
-    }
-
-    const button = menuButtonRef.current;
-    if (button) {
-      const rect = button.getBoundingClientRect();
-      const menuHeight = 240; // Approximate menu height
-      const menuWidth = 200;
-      const playerBarHeight = 96; // Player bar at bottom
-      const spaceBelow = window.innerHeight - rect.bottom - playerBarHeight;
-      const spaceAbove = rect.top;
-
-      let top: number;
-      if (spaceBelow >= menuHeight || spaceBelow > spaceAbove) {
-        // Open downward
-        top = rect.bottom + 8;
-      } else {
-        // Open upward
-        top = rect.top - menuHeight - 8;
-      }
-
-      // Ensure menu doesn't go off-screen horizontally
-      const left = Math.max(8, rect.right - menuWidth);
-
-      setMenuPosition({ top, left });
-    }
-    setShowMenu(true);
-  };
-
-  const handleAddToQueue = () => {
-    addToQueue([track]);
-    toast.success('Added to queue');
-    setShowMenu(false);
-    setMenuPosition(null);
-  };
-
-  const handlePlayNext = () => {
-    playNext(track);
-    toast.success('Playing next');
-    setShowMenu(false);
-    setMenuPosition(null);
-  };
+  const menuContext = { playlistId: currentPlaylistId, onRemove: onRemoveFromPlaylist };
 
   const {
     attributes,
@@ -101,7 +40,7 @@ const SortableTrackRow = ({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: track.id });
+  } = useSortable({ id: track.id, disabled: dragDisabled });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -110,14 +49,13 @@ const SortableTrackRow = ({
     zIndex: isDragging ? 1 : 0,
   };
 
-  const otherPlaylists = playlists.filter(p => p.id !== currentPlaylistId);
-
   return (
     <div
       ref={setNodeRef}
       style={style}
       onClick={onPlay}
-      className={`group grid grid-cols-[auto_auto_auto_1fr_1fr_auto_auto] gap-4 px-4 py-4 rounded-xl hover:bg-zinc-900/40 transition-colors items-center cursor-pointer ${
+      {...trackMenuProps(track, menuContext)}
+      className={`group ${TRACK_ROW_TOUCH_CLASSES} grid grid-cols-[auto_auto_auto_1fr_1fr_auto_auto] gap-4 px-4 py-4 rounded-xl hover:bg-zinc-900/40 transition-colors items-center cursor-pointer ${
         isCurrentTrack ? 'bg-zinc-900/30' : ''
       } ${isDragging ? 'bg-zinc-800/50 shadow-xl' : ''} ${isSelected ? 'bg-zinc-800/40' : ''}`}
     >
@@ -144,7 +82,9 @@ const SortableTrackRow = ({
       <div
         {...attributes}
         {...listeners}
-        className="w-6 flex items-center justify-center text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
+        className={`w-6 flex items-center justify-center text-zinc-600 hover:text-zinc-400 cursor-grab active:cursor-grabbing opacity-0 transition-opacity ${
+          dragDisabled ? 'invisible' : 'group-hover:opacity-100 [@media(hover:none)]:opacity-100'
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <GripVertical className="w-4 h-4" />
@@ -208,136 +148,12 @@ const SortableTrackRow = ({
       {/* More Button */}
       <div className="w-8 flex justify-end">
         <button
-          ref={menuButtonRef}
-          onClick={toggleMenu}
-          className="text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
+          onClick={(e) => openTrackMenuFromButton(e, track, menuContext)}
+          aria-label={`More actions for ${track.title}`}
+          className="text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
         >
           <MoreHorizontal className="w-5 h-5" />
         </button>
-
-        {/* Dropdown Menu - Fixed positioned to avoid clipping */}
-        {showMenu && menuPosition && (
-          <>
-            <div
-              className="fixed inset-0 z-[55]"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowMenu(false);
-                setShowPlaylistSubmenu(false);
-                setMenuPosition(null);
-              }}
-            />
-            <div
-              className="fixed z-[60] bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl py-1 min-w-[200px]"
-              style={{ top: menuPosition.top, left: menuPosition.left }}
-            >
-              {/* Play Next */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handlePlayNext();
-                }}
-                className="w-full flex items-center gap-3 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-              >
-                <ListStart className="w-4 h-4" />
-                Play Next
-              </button>
-
-              {/* Add to Queue */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleAddToQueue();
-                }}
-                className="w-full flex items-center gap-3 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-              >
-                <ListEnd className="w-4 h-4" />
-                Add to Queue
-              </button>
-
-              <div className="h-px bg-zinc-800/50 my-1" />
-
-              {/* Add to Liked Songs */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleFavorite(track);
-                  setShowMenu(false);
-                  setMenuPosition(null);
-                }}
-                className="w-full flex items-center gap-3 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-              >
-                <Heart className={`w-4 h-4 ${isFavorited(track.id) ? 'fill-pink-500 text-pink-500' : ''}`} />
-                {isFavorited(track.id) ? 'Remove from Liked' : 'Add to Liked Songs'}
-              </button>
-
-              {/* Add to Other Playlist */}
-              {otherPlaylists.length > 0 && (
-                <div className="relative">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowPlaylistSubmenu(!showPlaylistSubmenu);
-                    }}
-                    className="w-full flex items-center justify-between gap-3 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <ListPlus className="w-4 h-4" />
-                      Add to Playlist
-                    </div>
-                    <span className="text-xs text-zinc-500">▶</span>
-                  </button>
-
-                  {/* Playlist Submenu */}
-                  {showPlaylistSubmenu && (
-                    <div className="absolute right-full top-0 mr-1 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl py-1 min-w-[180px] max-h-64 overflow-y-auto">
-                      {otherPlaylists.map((playlist) => (
-                        <button
-                          key={playlist.id}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (onAddToOtherPlaylist) {
-                              onAddToOtherPlaylist(track);
-                            }
-                            setShowMenu(false);
-                            setShowPlaylistSubmenu(false);
-                            setMenuPosition(null);
-                          }}
-                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors text-left"
-                        >
-                          <div className="w-8 h-8 bg-zinc-800 rounded overflow-hidden flex-shrink-0">
-                            <img
-                              src={playlistCoverUrl(playlist)}
-                              alt={playlist.name}
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-                          <span className="truncate">{playlist.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Remove from Playlist */}
-              {onRemoveFromPlaylist && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onRemoveFromPlaylist();
-                    setShowMenu(false);
-                    setMenuPosition(null);
-                  }}
-                  className="w-full flex items-center gap-3 px-4 py-2 text-sm text-red-400 hover:bg-zinc-800 hover:text-red-300 transition-colors border-t border-zinc-800/50"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Remove from Playlist
-                </button>
-              )}
-            </div>
-          </>
-        )}
       </div>
     </div>
   );

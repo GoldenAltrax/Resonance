@@ -54,7 +54,6 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
   const [importProgress, setImportProgress] = useState({ current: 0, total: 0, completed: 0, skipped: 0, currentFile: '' });
   const [acousticDuplicates, setAcousticDuplicates] = useState<PendingDuplicate[]>([]);
   const [showAcousticDuplicateModal, setShowAcousticDuplicateModal] = useState(false);
-  const [showPlaylistPicker, setShowPlaylistPicker] = useState<Track | null>(null);
   const [sortBy, setSortBy] = useState<SortOption>('default');
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [selectedTracks, setSelectedTracks] = useState<Set<string>>(new Set());
@@ -215,14 +214,13 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
     setImportProgress({ current: 0, total: 0, completed: 0, skipped: 0, currentFile: '' });
   };
 
+  // Both play in the order shown, which follows the sort menu (`tracks` below)
   const handlePlayTrack = (track: Track, index: number) => {
-    const tracks = currentPlaylist?.tracks || [];
     // Play the selected track and set the queue to all tracks starting from this one
     play(track, tracks.slice(index).concat(tracks.slice(0, index)));
   };
 
   const handlePlayAll = () => {
-    const tracks = currentPlaylist?.tracks || [];
     if (tracks.length > 0 && tracks[0]) {
       play(tracks[0], tracks);
     }
@@ -278,17 +276,6 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
   // Handle removing track from playlist
   const handleRemoveFromPlaylist = async (trackId: string) => {
     await removeTrackFromPlaylist(playlistId, trackId);
-  };
-
-  // Handle adding track to another playlist
-  const handleAddToOtherPlaylist = async (track: Track, targetPlaylistId: string) => {
-    try {
-      await addTrackToPlaylist(targetPlaylistId, track.id);
-      toast.success(`Added to playlist`);
-    } catch {
-      toast.error('Failed to add to playlist');
-    }
-    setShowPlaylistPicker(null);
   };
 
   // Bulk selection handlers
@@ -634,9 +621,9 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
                     onPlay={() => handlePlayTrack(track, index)}
                     formatDuration={formatDuration}
                     onRemoveFromPlaylist={() => handleRemoveFromPlaylist(track.id)}
-                    onAddToOtherPlaylist={() => setShowPlaylistPicker(track)}
-                    playlists={playlists}
                     currentPlaylistId={playlistId}
+                    // Reordering a sorted view would save that sort as the playlist order
+                    dragDisabled={sortBy !== 'default'}
                     isSelected={selectedTracks.has(track.id)}
                     onSelect={() => toggleTrackSelection(track.id)}
                   />
@@ -677,65 +664,6 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
         skipped={importProgress.skipped}
         onCancel={handleCancelImport}
       />
-
-      {/* Playlist Picker Modal */}
-      {showPlaylistPicker && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
-            onClick={() => setShowPlaylistPicker(null)}
-          >
-            <div
-              className="bg-[#1a1a1a] rounded-2xl w-full max-w-md overflow-hidden border border-zinc-800"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="p-6 border-b border-zinc-800">
-                <h2 className="text-xl font-semibold text-white">Add to Playlist</h2>
-                <p className="text-sm text-zinc-400 mt-1">
-                  Choose a playlist to add "{showPlaylistPicker.title}"
-                </p>
-              </div>
-              <div className="max-h-80 overflow-y-auto">
-                {playlists.filter((p) => p.id !== playlistId).length === 0 ? (
-                  <div className="p-8 text-center text-zinc-500">
-                    No other playlists available
-                  </div>
-                ) : (
-                  playlists
-                    .filter((p) => p.id !== playlistId)
-                    .map((playlist) => (
-                      <button
-                        key={playlist.id}
-                        onClick={() => handleAddToOtherPlaylist(showPlaylistPicker, playlist.id)}
-                        className="w-full flex items-center gap-4 p-4 hover:bg-zinc-800/50 transition-colors"
-                      >
-                        <div className="w-12 h-12 bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0">
-                          <img
-                            src={playlistCoverUrl(playlist)}
-                            alt={playlist.name}
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                        <div className="text-left">
-                          <p className="text-white font-medium">{playlist.name}</p>
-                          <p className="text-sm text-zinc-500">Playlist</p>
-                        </div>
-                      </button>
-                    ))
-                )}
-              </div>
-              <div className="p-4 border-t border-zinc-800">
-                <button
-                  onClick={() => setShowPlaylistPicker(null)}
-                  className="w-full py-2.5 text-sm text-zinc-400 hover:text-white transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
 
       {/* Bulk Add to Playlist Modal */}
       {showBulkPlaylistPicker && (

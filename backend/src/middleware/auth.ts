@@ -6,42 +6,56 @@ import { eq } from 'drizzle-orm';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
 
-export async function authMiddleware(request: FastifyRequest, reply: FastifyReply) {
+interface TokenPayload {
+  userId: string;
+  username: string;
+  /** Issued-at, seconds (added by @fastify/jwt) */
+  iat?: number;
+}
+
+/**
+ * Verifies the JWT (Authorization header, or ?token= for media elements, which can't send
+ * headers) and checks it still belongs to a live session: the user must exist, and the token
+ * must not predate their last password change. Returns the user, or null.
+ */
+async function authenticate(request: FastifyRequest) {
+  let payload: TokenPayload;
   try {
-    // First try standard JWT verification (from Authorization header)
-    await request.jwtVerify();
-  } catch (err) {
-    // If header auth fails, try token from query param (for HTML5 Audio/Video elements)
-    const token = (request.query as { token?: string })?.token;
-    if (token) {
-      try {
-        const decoded = request.server.jwt.verify<{ userId: string; username: string }>(token);
-        // Manually set the user object like jwtVerify does
-        request.user = decoded;
-        return; // Auth successful via query param
-      } catch {
-        // Token verification failed
-      }
+    payload = await request.jwtVerify<TokenPayload>();
+  } catch {
+    const token = (request.query as { token?: string } | undefined)?.token;
+    if (!token) return null;
+    try {
+      payload = request.server.jwt.verify<TokenPayload>(token);
+      request.user = payload;
+    } catch {
+      return null;
     }
+  }
+
+  const user = await db.query.users.findFirst({
+    columns: { id: true, username: true, email: true, passwordChangedAt: true },
+    where: eq(users.id, payload.userId),
+  });
+  if (!user) return null;
+  if (user.passwordChangedAt && (payload.iat ?? 0) < Math.floor(user.passwordChangedAt.getTime() / 1000)) {
+    return null;
+  }
+  return user;
+}
+
+export async function authMiddleware(request: FastifyRequest, reply: FastifyReply) {
+  if (!(await authenticate(request))) {
     return reply.status(401).send({ error: 'Unauthorized' });
   }
 }
 
 export async function adminMiddleware(request: FastifyRequest, reply: FastifyReply) {
-  // First ensure user is authenticated
-  try {
-    await request.jwtVerify();
-  } catch {
+  const user = await authenticate(request);
+  if (!user) {
     return reply.status(401).send({ error: 'Unauthorized' });
   }
-
-  // Check if user is the admin
-  const { userId } = request.user as { userId: string };
-  const user = await db.query.users.findFirst({
-    where: eq(users.id, userId),
-  });
-
-  if (!user || !isAdmin(user.username, user.email)) {
+  if (!isAdmin(user.username, user.email)) {
     return reply.status(403).send({ error: 'Admin access required' });
   }
 }

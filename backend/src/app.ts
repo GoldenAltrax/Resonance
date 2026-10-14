@@ -8,6 +8,7 @@ import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { config } from 'dotenv';
 import { existsSync, mkdirSync } from 'fs';
+import { classifyUploadUrl } from './utils/uploadPaths.js';
 
 // Load .env from project root BEFORE importing routes that use env vars
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -108,9 +109,9 @@ await app.register(multipart, {
 
 // Audio files are only reachable through the authenticated /api/tracks/:id/stream route.
 app.addHook('onRequest', async (request, reply) => {
-  if (request.url.startsWith('/uploads/') && !request.url.startsWith('/uploads/images/')) {
-    return reply.status(404).send({ error: 'Not found' });
-  }
+  const verdict = classifyUploadUrl(request.url);
+  if (verdict === 'bad') return reply.status(400).send({ error: 'Bad request' });
+  if (verdict === 'blocked') return reply.status(404).send({ error: 'Not found' });
 });
 
 // Uploaded images (cover art, avatars, playlist covers). File names are UUIDs, so they can

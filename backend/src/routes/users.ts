@@ -6,6 +6,7 @@ import { db, users } from '../db/index.js';
 import { eq } from 'drizzle-orm';
 import { authMiddleware } from '../middleware/auth.js';
 import { IMAGES_DIR, resolveStoredFilePath } from '../services/ingest.js';
+import { readLimited } from '../utils/upload.js';
 
 // Allowed image extensions whitelist
 const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
@@ -16,8 +17,9 @@ function getSafeExtension(filename: string): string {
   return ALLOWED_IMAGE_EXTENSIONS.includes(ext) ? ext : 'jpg';
 }
 
+// Same username rules as signup
 const updateUserSchema = z.object({
-  username: z.string().min(2).max(50).optional(),
+  username: z.string().min(3).max(30).regex(/^[a-zA-Z0-9_]+$/).optional(),
   email: z.string().email().optional(),
 });
 
@@ -73,6 +75,21 @@ export async function userRoutes(app: FastifyInstance) {
       }
 
       const body = updateUserSchema.parse(request.body);
+
+      // Admin rights follow the ADMIN_USERNAME, so nobody else may take that name
+      const current = await db.query.users.findFirst({ columns: { username: true, email: true }, where: eq(users.id, id) });
+      if (!current) return reply.status(404).send({ error: 'User not found' });
+      if (body.username && body.username !== current.username && body.username === process.env.ADMIN_USERNAME) {
+        return reply.status(409).send({ error: 'Username already exists' });
+      }
+      if (body.username && body.username !== current.username) {
+        const taken = await db.query.users.findFirst({ columns: { id: true }, where: eq(users.username, body.username) });
+        if (taken) return reply.status(409).send({ error: 'Username already exists' });
+      }
+      if (body.email && body.email !== current.email) {
+        const taken = await db.query.users.findFirst({ columns: { id: true }, where: eq(users.email, body.email) });
+        if (taken) return reply.status(409).send({ error: 'Email already in use' });
+      }
 
       await db.update(users)
         .set({ ...body, updatedAt: new Date() })
@@ -174,20 +191,11 @@ export async function userRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'Invalid file type. Supported: JPEG, PNG, WebP, GIF' });
     }
 
-    // Check file size (consume stream to check)
-    const chunks: Buffer[] = [];
-    let totalSize = 0;
-    const maxSize = 2 * 1024 * 1024; // 2MB
-
-    for await (const chunk of data.file) {
-      totalSize += chunk.length;
-      if (totalSize > maxSize) {
-        return reply.status(413).send({ error: 'File too large. Maximum avatar size is 2MB.' });
-      }
-      chunks.push(chunk);
+    // The size limit truncates the stream rather than failing it, so check explicitly
+    const fileBuffer = await readLimited(data);
+    if (!fileBuffer) {
+      return reply.status(413).send({ error: 'File too large. Maximum avatar size is 2MB.' });
     }
-
-    const fileBuffer = Buffer.concat(chunks);
 
     // Generate unique filename with validated extension
     const ext = getSafeExtension(data.filename);

@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Search as SearchIcon, TrendingUp, Compass, Headphones, Music, ListMusic, Loader2, Play, X, MoreHorizontal, Heart, Plus, ListEnd, ListStart, Radio } from 'lucide-react';
+import { Search as SearchIcon, TrendingUp, Compass, Headphones, Music, ListMusic, Loader2, Play, X, MoreHorizontal, Heart, Radio } from 'lucide-react';
 import { api, Track, Playlist } from '@/services/api';
 import { playlistCoverUrl } from '@/utils/cover';
 import { usePlayerStore } from '@/stores/playerStore';
-import { usePlaylistStore } from '@/stores/playlistStore';
 import { useFavoritesStore } from '@/stores/favoritesStore';
 import { toast } from '@/stores/toastStore';
+import { trackMenuProps, openTrackMenuFromButton, TRACK_ROW_TOUCH_CLASSES } from '@/utils/trackMenu';
 
 const RECENT_SEARCHES_KEY = 'resonance_recent_searches';
 const MAX_RECENT_SEARCHES = 8;
@@ -18,32 +18,12 @@ const SearchView = () => {
   const [error, setError] = useState<string | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
-  const [activeTrackMenu, setActiveTrackMenu] = useState<string | null>(null);
-  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
-  const [showPlaylistPicker, setShowPlaylistPicker] = useState<Track | null>(null);
-  const menuButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
   const searchSeqRef = useRef(0);
   // Actions only: stable references, no subscription
-  const { play, addToQueue, playNext, startRadio } = usePlayerStore.getState();
-  const { playlists, addTrackToPlaylist } = usePlaylistStore();
+  const { play, startRadio } = usePlayerStore.getState();
   const { isFavorited, toggleFavorite } = useFavoritesStore();
   const [loadingRadio, setLoadingRadio] = useState<string | null>(null);
-
-  // Queue management handlers
-  const handleAddToQueue = (track: Track, e: React.MouseEvent) => {
-    e.stopPropagation();
-    addToQueue([track]);
-    toast.success('Added to queue');
-    setActiveTrackMenu(null);
-  };
-
-  const handlePlayNext = (track: Track, e: React.MouseEvent) => {
-    e.stopPropagation();
-    playNext(track);
-    toast.success('Playing next');
-    setActiveTrackMenu(null);
-  };
 
   // Start Radio mode
   const handleStartRadio = async (track: Track, e: React.MouseEvent) => {
@@ -148,65 +128,6 @@ const SearchView = () => {
     play(track, results.tracks);
   };
 
-  // Toggle track menu
-  const toggleTrackMenu = (trackId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (activeTrackMenu === trackId) {
-      setActiveTrackMenu(null);
-      setMenuPosition(null);
-    } else {
-      const button = menuButtonRefs.current.get(trackId);
-      if (button) {
-        const rect = button.getBoundingClientRect();
-        // Position menu above the button, accounting for player bar (h-24 = 96px)
-        const menuHeight = 200; // Approximate menu height
-        const spaceAbove = rect.top;
-        const spaceBelow = window.innerHeight - rect.bottom - 96; // 96px for player bar
-
-        if (spaceAbove > menuHeight || spaceAbove > spaceBelow) {
-          // Open upward
-          setMenuPosition({
-            top: rect.top - menuHeight - 8,
-            left: rect.right - 180, // Menu width is 180px
-          });
-        } else {
-          // Open downward
-          setMenuPosition({
-            top: rect.bottom + 8,
-            left: rect.right - 180,
-          });
-        }
-      }
-      setActiveTrackMenu(trackId);
-    }
-  };
-
-  // Handle favorite toggle from menu
-  const handleFavoriteFromMenu = (track: Track, e: React.MouseEvent) => {
-    e.stopPropagation();
-    toggleFavorite(track);
-    setActiveTrackMenu(null);
-  };
-
-  // Open playlist picker
-  const handleAddToPlaylist = (track: Track, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setShowPlaylistPicker(track);
-    setActiveTrackMenu(null);
-  };
-
-  // Add track to playlist
-  const handleSelectPlaylist = async (playlistId: string) => {
-    if (!showPlaylistPicker) return;
-    try {
-      await addTrackToPlaylist(playlistId, showPlaylistPicker.id, true);
-      toast.success(`Added "${showPlaylistPicker.title}" to playlist`);
-    } catch {
-      toast.error('Failed to add to playlist');
-    }
-    setShowPlaylistPicker(null);
-  };
-
   const categories = [
     { name: 'Podcasts', color: 'bg-zinc-800/40', icon: Headphones },
     { name: 'New Releases', color: 'bg-zinc-800/40', icon: Compass },
@@ -294,7 +215,8 @@ const SearchView = () => {
                 {results.tracks.map((track) => (
                   <div
                     key={track.id}
-                    className="relative flex items-center gap-2 sm:gap-4 p-3 sm:p-4 bg-zinc-900/50 hover:bg-zinc-800/70 rounded-xl transition-all group"
+                    {...trackMenuProps(track)}
+                    className={`${TRACK_ROW_TOUCH_CLASSES} relative flex items-center gap-2 sm:gap-4 p-3 sm:p-4 bg-zinc-900/50 hover:bg-zinc-800/70 rounded-xl transition-all group`}
                   >
                     <button
                       onClick={() => handlePlayTrack(track)}
@@ -342,10 +264,8 @@ const SearchView = () => {
                     {/* Three-dot menu - always visible on mobile */}
                     <div className="flex-shrink-0">
                       <button
-                        ref={(el) => {
-                          if (el) menuButtonRefs.current.set(track.id, el);
-                        }}
-                        onClick={(e) => toggleTrackMenu(track.id, e)}
+                        onClick={(e) => openTrackMenuFromButton(e, track)}
+                        aria-label={`More actions for ${track.title}`}
                         className="p-1 text-zinc-600 hover:text-white transition-colors sm:opacity-0 sm:group-hover:opacity-100"
                       >
                         <MoreHorizontal className="w-5 h-5" />
@@ -446,98 +366,6 @@ const SearchView = () => {
         </>
       )}
 
-      {/* Click outside to close menu */}
-      {activeTrackMenu && (
-        <div className="fixed inset-0 z-[55]" onClick={() => { setActiveTrackMenu(null); setMenuPosition(null); }} />
-      )}
-
-      {/* Fixed position dropdown menu */}
-      {activeTrackMenu && menuPosition && (
-        <div
-          className="fixed z-[60] bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl py-1 min-w-[180px]"
-          style={{ top: menuPosition.top, left: menuPosition.left }}
-        >
-          {(() => {
-            const track = results.tracks.find(t => t.id === activeTrackMenu);
-            if (!track) return null;
-            return (
-              <>
-                <button
-                  onClick={(e) => handlePlayNext(track, e)}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-                >
-                  <ListStart className="w-4 h-4" />
-                  Play Next
-                </button>
-                <button
-                  onClick={(e) => handleAddToQueue(track, e)}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-                >
-                  <ListEnd className="w-4 h-4" />
-                  Add to Queue
-                </button>
-                <div className="h-px bg-zinc-800/50 my-1" />
-                <button
-                  onClick={(e) => handleFavoriteFromMenu(track, e)}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-                >
-                  <Heart className={`w-4 h-4 ${isFavorited(track.id) ? 'fill-pink-500 text-pink-500' : ''}`} />
-                  {isFavorited(track.id) ? 'Remove from Liked' : 'Add to Liked Songs'}
-                </button>
-                <button
-                  onClick={(e) => handleAddToPlaylist(track, e)}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-                >
-                  <Plus className="w-4 h-4" />
-                  Add to Playlist
-                </button>
-              </>
-            );
-          })()}
-        </div>
-      )}
-
-      {/* Playlist Picker Modal */}
-      {showPlaylistPicker && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#111111] border border-zinc-800 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
-            <h3 className="text-lg font-medium text-white mb-2">Add to Playlist</h3>
-            <p className="text-zinc-500 text-sm mb-4 truncate">
-              {showPlaylistPicker.title}
-            </p>
-            {playlists.length === 0 ? (
-              <p className="text-zinc-500 text-sm py-4 text-center">
-                No playlists yet. Create one first!
-              </p>
-            ) : (
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {playlists.map((playlist) => (
-                  <button
-                    key={playlist.id}
-                    onClick={() => handleSelectPlaylist(playlist.id)}
-                    className="w-full flex items-center gap-3 p-3 bg-zinc-900/50 hover:bg-zinc-800 rounded-xl transition-colors text-left"
-                  >
-                    <div className="w-10 h-10 bg-zinc-800 rounded-lg overflow-hidden flex-shrink-0">
-                      <img
-                        src={playlistCoverUrl(playlist)}
-                        alt={playlist.name}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                    <span className="text-white truncate">{playlist.name}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-            <button
-              onClick={() => setShowPlaylistPicker(null)}
-              className="w-full mt-4 px-4 py-2.5 rounded-xl border border-zinc-700 text-zinc-300 hover:bg-zinc-800 transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

@@ -24,6 +24,12 @@ describe('router', () => {
     expect(parseRoute('/admin/nope')).toEqual({ page: 'home' });
   });
 
+  it('round-trips album names, including ones with slashes and spaces', () => {
+    const album = 'Rock On!! / Live';
+    expect(parseRoute(pathFor('albums', album))).toEqual({ page: 'albums', album });
+    expect(pathFor('albums')).toBe('/albums');
+  });
+
   it('falls back to home for unknown paths', () => {
     expect(parseRoute('/nope')).toEqual({ page: 'home' });
   });

@@ -237,7 +237,8 @@ export async function assistantRoutes(app: FastifyInstance) {
       for (let round = 0; round < MAX_ROUNDS; round++) {
         const stream = client.messages.stream({
           model: MODEL,
-          max_tokens: 2048,
+          // Current models think by default and thinking counts toward this cap
+          max_tokens: 8192,
           system: systemPrompt(user?.username ?? 'the admin'),
           tools,
           messages,
@@ -246,14 +247,24 @@ export async function assistantRoutes(app: FastifyInstance) {
         stream.on('text', (text) => send({ type: 'text', text }));
         const message = await stream.finalMessage();
 
+        // Within this turn the response goes back unmodified (thinking blocks must accompany
+        // tool results). Only text and tool calls are stored: earlier turns are trimmed and
+        // shrunk later, and edited history would invalidate replayed thinking blocks.
+        if (message.content.length) messages.push({ role: 'assistant', content: message.content });
         const content = toParams(message.content);
-        if (content.length) {
-          messages.push({ role: 'assistant', content });
-          saveMessage(conversationId, 'assistant', content, message.usage);
-        }
+        if (content.length) saveMessage(conversationId, 'assistant', content, message.usage);
 
         const calls = message.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
-        if (message.stop_reason !== 'tool_use' || !calls.length) break;
+        if (message.stop_reason !== 'tool_use' || !calls.length) {
+          const note = message.stop_reason === 'refusal' ? 'I can\'t help with that request.'
+            : message.stop_reason === 'max_tokens' ? 'My reply was cut off because it got too long. Ask me to continue.'
+            : null;
+          if (note) {
+            send({ type: 'text', text: content.length ? `\n\n${note}` : note });
+            saveMessage(conversationId, 'assistant', [{ type: 'text', text: note }]);
+          }
+          break;
+        }
 
         for (const call of calls) send({ type: 'step', id: call.id, label: toolLabel(call.name, call.input as Record<string, unknown>) });
         const outcomes = await Promise.all(calls.map((call) => runTool(call.name, call.input as Record<string, unknown>, { userId })));

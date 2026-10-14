@@ -75,9 +75,11 @@ export const useFavoritesStore = create<FavoritesState>((set, get) => ({
       if (isFav) {
         await api.removeFavorite(track.id);
       } else {
-        await api.addFavorite(track.id);
-        // Refresh to get proper favorite entry
-        get().fetchFavorites();
+        const saved = await api.addFavorite(track.id);
+        // Swap the optimistic entry for the saved row (no need to refetch the whole list)
+        set((s) => ({
+          favorites: s.favorites.map((f) => (f.id === 'temp-' + track.id ? { ...saved, track } : f)),
+        }));
       }
     } catch (error) {
       // Revert to original state on error (captures at start to avoid race conditions)

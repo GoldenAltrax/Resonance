@@ -10,6 +10,8 @@ export interface Route {
   playlistId?: string;
   /** Admin Panel tab, from /admin/<tab> */
   adminTab?: AdminTab;
+  /** Album name, from /albums/<name> */
+  album?: string;
 }
 
 export const ADMIN_TABS: AdminTab[] = ['overview', 'users', 'invites', 'add-music', 'assistant', 'usage', 'maintenance'];
@@ -27,9 +29,10 @@ const STATIC_PATHS: Record<Exclude<Page, 'playlist-detail'>, string> = {
 
 const ROUTE_CHANGE = 'resonance:navigate';
 
-/** `param` is the playlist id for playlist-detail, or the tab for admin. */
+/** `param` is the playlist id for playlist-detail, the tab for admin, or the album name for albums. */
 export function pathFor(page: Page, param?: string): string {
   if (page === 'playlist-detail') return param ? `/playlists/${encodeURIComponent(param)}` : '/playlists';
+  if (page === 'albums' && param) return `/albums/${encodeURIComponent(param)}`;
   if (page === 'admin' && param && param !== 'overview') return `/admin/${param}`;
   return STATIC_PATHS[page];
 }
@@ -38,6 +41,8 @@ export function parseRoute(pathname: string): Route {
   const path = pathname.replace(/\/+$/, '') || '/';
   const detail = path.match(/^\/playlists\/([^/]+)$/);
   if (detail?.[1]) return { page: 'playlist-detail', playlistId: decodeURIComponent(detail[1]) };
+  const album = path.match(/^\/albums\/(.+)$/);
+  if (album?.[1]) return { page: 'albums', album: decodeURIComponent(album[1]) };
   const admin = path.match(/^\/admin\/([\w-]+)$/);
   if (admin?.[1] && (ADMIN_TABS as string[]).includes(admin[1])) return { page: 'admin', adminTab: admin[1] as AdminTab };
   // Add music used to be its own page

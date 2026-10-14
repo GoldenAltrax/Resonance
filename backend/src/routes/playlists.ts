@@ -7,6 +7,7 @@ import { db, playlists, playlistTracks, tracks, trackPublicColumns } from '../db
 import { eq, and, sql } from 'drizzle-orm';
 import { authMiddleware } from '../middleware/auth.js';
 import { IMAGES_DIR, resolveStoredFilePath } from '../services/ingest.js';
+import { readLimited } from '../utils/upload.js';
 
 // Allowed image extensions whitelist
 const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
@@ -300,20 +301,11 @@ export async function playlistRoutes(app: FastifyInstance) {
       return reply.status(400).send({ error: 'Invalid file type. Supported: JPEG, PNG, WebP, GIF' });
     }
 
-    // Check file size (consume stream to check)
-    const chunks: Buffer[] = [];
-    let totalSize = 0;
-    const maxSize = 5 * 1024 * 1024; // 5MB
-
-    for await (const chunk of data.file) {
-      totalSize += chunk.length;
-      if (totalSize > maxSize) {
-        return reply.status(413).send({ error: 'File too large. Maximum size is 5MB.' });
-      }
-      chunks.push(chunk);
+    // The size limit truncates the stream rather than failing it, so check explicitly
+    const fileBuffer = await readLimited(data);
+    if (!fileBuffer) {
+      return reply.status(413).send({ error: 'File too large. Maximum size is 5MB.' });
     }
-
-    const fileBuffer = Buffer.concat(chunks);
 
     // Generate unique filename with validated extension
     const ext = getSafeExtension(data.filename);

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import { usePlaylistStore } from '@/stores/playlistStore';
+import { useFavoritesStore } from '@/stores/favoritesStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useNetworkStore } from '@/stores/networkStore';
 import { useAssistantStore } from '@/stores/assistantStore';
@@ -15,6 +16,7 @@ import HomeView from '@/views/HomeView';
 import Sidebar from '@/components/Sidebar';
 import PlayerBar from '@/components/player/PlayerBar';
 import { ToastContainer } from '@/components/ui/Toast';
+import TrackMenu from '@/components/TrackMenu';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import OfflineBanner from '@/components/OfflineBanner';
@@ -109,10 +111,12 @@ const App = () => {
     useAuthStore.getState().checkAuth().finally(() => setIsBooting(false));
   }, []);
 
-  // Per-user data: playlists and synced player preferences
+  // Per-user data: playlists, liked-song ids (every heart and track menu reads them) and
+  // synced player preferences
   useEffect(() => {
     if (!isAuthenticated || !userId) return;
     usePlaylistStore.getState().fetchPlaylists();
+    useFavoritesStore.getState().fetchFavoriteIds();
     api.getPreferences(userId)
       .then((prefs) => { if (prefs) usePlayerStore.getState().loadPreferences(prefs); })
       .catch(() => {});
@@ -216,6 +220,7 @@ const App = () => {
             <Sparkles className="w-5 h-5" />
           </button>
         )}
+        <TrackMenu />
         <ToastContainer />
       </div>
     </ErrorBoundary>

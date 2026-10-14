@@ -83,8 +83,9 @@ export async function trackRoutes(app: FastifyInstance) {
       orderBy: (tracks, { asc }) => [asc(tracks.album), asc(tracks.title)],
     });
 
+    // Field names match the frontend's AlbumSummary
     type AlbumEntry = {
-      name: string;
+      album: string;
       artist: string | null;
       coverArt: string | null;
       trackCount: number;
@@ -97,7 +98,7 @@ export async function trackRoutes(app: FastifyInstance) {
       const key = (track.album || '').trim() || 'Unknown Album';
       if (!albumMap.has(key)) {
         albumMap.set(key, {
-          name: key,
+          album: key,
           artist: track.artist,
           coverArt: track.coverArt ?? null,
           trackCount: 0,
@@ -114,7 +115,7 @@ export async function trackRoutes(app: FastifyInstance) {
     }
 
     const albums = Array.from(albumMap.values()).sort((a, b) =>
-      a.name.localeCompare(b.name)
+      a.album.localeCompare(b.album)
     );
 
     return reply.send({ albums });
@@ -176,6 +177,11 @@ export async function trackRoutes(app: FastifyInstance) {
 
     try {
       await pipeline(data.file, createWriteStream(tempFilePath));
+      // The size limit truncates the stream instead of failing it; don't import half a song
+      if (data.file.truncated) {
+        await unlink(tempFilePath).catch(() => {});
+        return reply.status(413).send({ error: 'File too large. Maximum size is 100MB.' });
+      }
 
       const result = await ingestAudioFile({
         sourcePath: tempFilePath,

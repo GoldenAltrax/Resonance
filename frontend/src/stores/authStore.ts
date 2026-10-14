@@ -4,12 +4,14 @@ import { api, HttpError, User } from '@/services/api';
 import { toast } from '@/stores/toastStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useFavoritesStore } from '@/stores/favoritesStore';
+import { usePlaylistStore } from '@/stores/playlistStore';
 
 // Forget everything tied to the previous account: playback session, favorites, cached API data.
 // Without this the next person to sign in on the device inherits the old queue.
 function clearUserSession() {
   usePlayerStore.getState().reset();
   useFavoritesStore.getState().clearFavorites();
+  usePlaylistStore.setState({ playlists: [], currentPlaylist: null });
   try { localStorage.removeItem('resonance-resume'); } catch { /* ignore */ }
   navigator.serviceWorker?.controller?.postMessage({ type: 'CLEAR_API_CACHE' });
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, ChangeEvent, useMemo, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Upload, Play, Pause, Trash2, Search, Music2, X, CheckSquare, Square, Heart, ArrowUpDown, ChevronDown, Disc3, CirclePlus } from 'lucide-react';
+import { Upload, Play, Pause, Trash2, Search, Music2, X, CheckSquare, Square, Heart, ArrowUpDown, ChevronDown, Disc3, CirclePlus, MoreHorizontal } from 'lucide-react';
 import { usePlaylistStore } from '@/stores/playlistStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -12,6 +12,7 @@ import ImportProgressModal from '@/components/ui/ImportProgressModal';
 import DropZone from '@/components/ui/DropZone';
 import { useFavoritesStore } from '@/stores/favoritesStore';
 import { navigate } from '@/utils/router';
+import { trackMenuProps, openTrackMenuFromButton, TRACK_ROW_TOUCH_CLASSES } from '@/utils/trackMenu';
 
 // File size limits
 const MAX_TRACK_SIZE = 50 * 1024 * 1024; // 50MB
@@ -59,7 +60,7 @@ const LibraryView = () => {
   const [showSortDropdown, setShowSortDropdown] = useState(false);
 
   const { library, libraryLoading, fetchLibrary, uploadTrack, deleteTrack } = usePlaylistStore();
-  const { play, pause } = usePlayerStore.getState();
+  const { play, pause, resume } = usePlayerStore.getState();
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const { toggleFavorite, isFavorited, fetchFavoriteIds } = useFavoritesStore();
@@ -225,8 +226,9 @@ const LibraryView = () => {
   };
 
   const handlePlayTrack = (track: Track) => {
-    if (currentTrack?.id === track.id && isPlaying) {
-      pause();
+    if (currentTrack?.id === track.id) {
+      // The current track toggles instead of restarting from the beginning
+      if (isPlaying) pause(); else resume();
     } else {
       play(track, filteredTracks);
     }
@@ -450,7 +452,7 @@ const LibraryView = () => {
             <span className="hidden md:block text-right">Duration</span>
             <span className="hidden md:block">Added</span>
             <span className="w-8"></span>
-            <span className="w-10"></span>
+            <span className="w-16"></span>
           </div>
 
           {/* Track Rows - Virtualized for large lists */}
@@ -483,7 +485,8 @@ const LibraryView = () => {
                       }}
                     >
                       <div
-                        className={`grid grid-cols-[auto_1fr_auto_auto] md:grid-cols-[auto_1fr_1fr_100px_120px_auto_auto] gap-4 px-4 h-14 items-center hover:bg-zinc-800/30 transition-colors group ${
+                        {...trackMenuProps(track)}
+                        className={`${TRACK_ROW_TOUCH_CLASSES} grid grid-cols-[auto_1fr_auto_auto] md:grid-cols-[auto_1fr_1fr_100px_120px_auto_auto] gap-4 px-4 h-14 items-center hover:bg-zinc-800/30 transition-colors group ${
                           isTrackPlaying(track) ? 'bg-zinc-800/50' : ''
                         }`}
                       >
@@ -542,16 +545,25 @@ const LibraryView = () => {
                           <Heart className={`w-4 h-4 ${isFavorited(track.id) ? 'fill-current' : ''}`} />
                         </button>
 
-                        {/* Delete Button (admin) */}
-                        {isAdmin ? (
-                        <button
-                          onClick={() => handleDeleteClick(track)}
-                          className="w-10 flex items-center justify-center text-zinc-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-                          title="Delete track"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                        ) : <span className="w-10" />}
+                        {/* Delete (admin) and track menu */}
+                        <div className="w-16 flex items-center justify-end gap-1">
+                          {isAdmin && (
+                            <button
+                              onClick={() => handleDeleteClick(track)}
+                              className="w-7 flex items-center justify-center text-zinc-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                              title="Delete track"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                          <button
+                            onClick={(e) => openTrackMenuFromButton(e, track)}
+                            aria-label={`More actions for ${track.title}`}
+                            className="w-7 flex items-center justify-center text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
+                          >
+                            <MoreHorizontal className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -564,7 +576,8 @@ const LibraryView = () => {
               {filteredTracks.map((track) => (
                 <div
                   key={track.id}
-                  className={`grid grid-cols-[auto_1fr_auto_auto] md:grid-cols-[auto_1fr_1fr_100px_120px_auto_auto] gap-4 px-4 py-3 items-center hover:bg-zinc-800/30 transition-colors group ${
+                  {...trackMenuProps(track)}
+                  className={`${TRACK_ROW_TOUCH_CLASSES} grid grid-cols-[auto_1fr_auto_auto] md:grid-cols-[auto_1fr_1fr_100px_120px_auto_auto] gap-4 px-4 py-3 items-center hover:bg-zinc-800/30 transition-colors group ${
                     isTrackPlaying(track) ? 'bg-zinc-800/50' : ''
                   }`}
                 >
@@ -623,16 +636,25 @@ const LibraryView = () => {
                     <Heart className={`w-4 h-4 ${isFavorited(track.id) ? 'fill-current' : ''}`} />
                   </button>
 
-                  {/* Delete Button (admin) */}
-                  {isAdmin ? (
-                  <button
-                    onClick={() => handleDeleteClick(track)}
-                    className="w-10 flex items-center justify-center text-zinc-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-                    title="Delete track"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                  ) : <span className="w-10" />}
+                  {/* Delete (admin) and track menu */}
+                  <div className="w-16 flex items-center justify-end gap-1">
+                    {isAdmin && (
+                      <button
+                        onClick={() => handleDeleteClick(track)}
+                        className="w-7 flex items-center justify-center text-zinc-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                        title="Delete track"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => openTrackMenuFromButton(e, track)}
+                      aria-label={`More actions for ${track.title}`}
+                      className="w-7 flex items-center justify-center text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
+                    >
+                      <MoreHorizontal className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

@@ -98,7 +98,7 @@ class ApiClient {
   }
 
   async changePassword(currentPassword: string, newPassword: string) {
-    return this.request<{ message: string }>('/auth/change-password', {
+    return this.request<{ message: string; token?: string }>('/auth/change-password', {
       method: 'POST',
       body: JSON.stringify({ currentPassword, newPassword }),
     });

@@ -9,6 +9,8 @@ export const users = sqliteTable('users', {
   passwordHash: text('password_hash').notNull(),
   profileImage: text('profile_image'),
   preferences: text('preferences'), // JSON string of synced player preferences
+  // Tokens issued before this are rejected, so a password change signs out other devices
+  passwordChangedAt: integer('password_changed_at', { mode: 'timestamp' }),
   createdAt: integer('created_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
   updatedAt: integer('updated_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
 });

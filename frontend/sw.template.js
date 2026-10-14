@@ -6,7 +6,7 @@
  *   App shell (index.html, JS/CSS, icons)  precached → app opens offline
  *   /assets/* (hashed, immutable)           cache-first
  *   Page navigations                        network-first (3s) → cached shell
- *   /uploads/images/* (cover art)           stale-while-revalidate, capped
+ *   /uploads/images/* (cover art)           cache-first, capped (names are versioned, never change)
  *   Library/playlist/favorites/history API  network-first → last cached copy
  *   Audio streams, auth, uploads, writes    network only (never cached)
  */
@@ -74,7 +74,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   if (url.pathname.startsWith('/uploads/images/')) {
-    event.respondWith(staleWhileRevalidate(request, IMAGE_CACHE, MAX_IMAGES));
+    event.respondWith(cacheFirst(request, IMAGE_CACHE, MAX_IMAGES));
     return;
   }
   if (url.pathname.startsWith('/api/')) {
@@ -102,13 +102,13 @@ async function navigationHandler(event) {
   }
 }
 
-async function cacheFirst(request, cacheName) {
+async function cacheFirst(request, cacheName, maxEntries) {
   const cached = await caches.match(request);
   if (cached) return cached;
   const response = await fetch(request);
   if (response.ok) {
     const cache = await caches.open(cacheName);
-    cache.put(request, response.clone());
+    cache.put(request, response.clone()).then(() => maxEntries && trimCache(cache, maxEntries));
   }
   return response;
 }
@@ -124,22 +124,6 @@ async function networkFirst(request, cacheName) {
     if (cached) return cached;
     throw err;
   }
-}
-
-async function staleWhileRevalidate(request, cacheName, maxEntries) {
-  const cache = await caches.open(cacheName);
-  const cached = await cache.match(request);
-  const network = fetch(request)
-    .then(async (response) => {
-      // Opaque cross-origin responses (fonts) have status 0 but are still cacheable
-      if (response.ok || response.type === 'opaque') {
-        await cache.put(request, response.clone());
-        if (maxEntries) trimCache(cache, maxEntries);
-      }
-      return response;
-    })
-    .catch(() => cached);
-  return cached ?? network;
 }
 
 async function trimCache(cache, maxEntries) {

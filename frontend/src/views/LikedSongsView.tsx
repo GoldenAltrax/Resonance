@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Play, Pause, Heart, ListPlus, Plus, Loader2 } from 'lucide-react';
+import { Play, Pause, Heart, ListPlus, Plus, Loader2, MoreHorizontal } from 'lucide-react';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useFavoritesStore } from '@/stores/favoritesStore';
 import { usePlaylistStore } from '@/stores/playlistStore';
 import { Track, api } from '@/services/api';
 import { playlistCoverUrl } from '@/utils/cover';
 import { toast } from '@/stores/toastStore';
+import { trackMenuProps, openTrackMenuFromButton, TRACK_ROW_TOUCH_CLASSES } from '@/utils/trackMenu';
 
 const LikedSongsView = () => {
   const { favorites, isLoading, fetchFavorites, toggleFavorite } = useFavoritesStore();
-  const { play, pause } = usePlayerStore.getState();
+  const { play, pause, resume } = usePlayerStore.getState();
   const currentTrack = usePlayerStore((s) => s.currentTrack);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const { playlists, fetchPlaylists, addTrackToPlaylist, createPlaylist } = usePlaylistStore();
@@ -80,8 +81,9 @@ const LikedSongsView = () => {
 
   const handlePlayTrack = (track: Track) => {
     const tracks = favorites.map(f => f.track);
-    if (currentTrack?.id === track.id && isPlaying) {
-      pause();
+    if (currentTrack?.id === track.id) {
+      // The current track toggles instead of restarting from the beginning
+      if (isPlaying) pause(); else resume();
     } else {
       play(track, tracks);
     }
@@ -174,7 +176,7 @@ const LikedSongsView = () => {
             <span>Title</span>
             <span>Artist</span>
             <span className="text-right">Duration</span>
-            <span className="w-10"></span>
+            <span className="w-16"></span>
           </div>
 
           {/* Track Rows */}
@@ -186,7 +188,8 @@ const LikedSongsView = () => {
               return (
                 <div
                   key={fav.id}
-                  className={`grid grid-cols-[auto_1fr_1fr_100px_auto] gap-4 px-4 py-3 items-center hover:bg-zinc-800/30 transition-colors group ${
+                  {...trackMenuProps(track)}
+                  className={`${TRACK_ROW_TOUCH_CLASSES} grid grid-cols-[auto_1fr_1fr_100px_auto] gap-4 px-4 py-3 items-center hover:bg-zinc-800/30 transition-colors group ${
                     isTrackPlaying(track) ? 'bg-zinc-800/50' : ''
                   }`}
                 >
@@ -237,14 +240,23 @@ const LikedSongsView = () => {
                     {formatDuration(track.duration)}
                   </span>
 
-                  {/* Unlike Button */}
-                  <button
-                    onClick={() => toggleFavorite(track)}
-                    className="w-10 flex items-center justify-center text-pink-500 hover:text-pink-400 transition-colors"
-                    title="Remove from Liked Songs"
-                  >
-                    <Heart className="w-4 h-4 fill-current" />
-                  </button>
+                  {/* Unlike and track menu */}
+                  <div className="w-16 flex items-center justify-end gap-1">
+                    <button
+                      onClick={() => toggleFavorite(track)}
+                      className="w-7 flex items-center justify-center text-pink-500 hover:text-pink-400 transition-colors"
+                      title="Remove from Liked Songs"
+                    >
+                      <Heart className="w-4 h-4 fill-current" />
+                    </button>
+                    <button
+                      onClick={(e) => openTrackMenuFromButton(e, track)}
+                      aria-label={`More actions for ${track.title}`}
+                      className="w-7 flex items-center justify-center text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
+                    >
+                      <MoreHorizontal className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               );
             })}

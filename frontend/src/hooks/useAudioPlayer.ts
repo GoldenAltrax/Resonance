@@ -208,7 +208,9 @@ export function useAudioPlayer() {
       const remaining = s.queue.length - (s.queueIndex + 1);
       if (remaining > RADIO_REFILL_THRESHOLD) return;
       radioRefillInFlight = true;
-      const excludeIds = s.queue.map((t) => t.id).join(',');
+      // Recent tracks only: the ids go in the URL, and a long radio session's whole queue
+      // would exceed the server's header size limit (the refill would then fail silently)
+      const excludeIds = s.queue.slice(-150).map((t) => t.id).join(',');
       const recentArtists = s.queue
         .slice(Math.max(0, s.queueIndex - 4), s.queueIndex + 1)
         .map((t) => t.artist)
