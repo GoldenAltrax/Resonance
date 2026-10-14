@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { api, HttpError, User } from '@/services/api';
+import { api, HttpError, User, STREAM_TOKEN_REPLACED } from '@/services/api';
 import { toast } from '@/stores/toastStore';
 import { usePlayerStore } from '@/stores/playerStore';
 import { useFavoritesStore } from '@/stores/favoritesStore';
@@ -32,6 +32,8 @@ interface AuthState {
   uploadAvatar: (file: File) => Promise<void>;
   clearError: () => void;
   handleSessionExpired: () => void;
+  /** Swap in a token issued after the current one was revoked (password change). */
+  replaceToken: (token: string) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -56,6 +58,13 @@ export const useAuthStore = create<AuthState>()(
           error: null,
         });
         toast.warning('Session expired. Please log in again.');
+      },
+
+      replaceToken: (token: string) => {
+        api.setToken(token);
+        set({ token });
+        // Loaded audio still streams with the revoked token in its URL; the player reloads it
+        window.dispatchEvent(new Event(STREAM_TOKEN_REPLACED));
       },
 
       login: async (username: string, password: string) => {

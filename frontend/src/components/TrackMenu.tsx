@@ -8,6 +8,7 @@ import { useFavoritesStore } from '@/stores/favoritesStore';
 import { toast } from '@/stores/toastStore';
 import { navigate, useMediaQuery, useRoute } from '@/utils/router';
 import { playlistCoverUrl } from '@/utils/cover';
+import { isLongPressTail } from '@/utils/trackMenu';
 
 const EDGE = 8;
 /** Placeholder some downloaders write into the album tag; not a real album to open. */
@@ -41,6 +42,7 @@ function MenuPanel({ track }: { track: Track }) {
   const playlists = usePlaylistStore((s) => s.playlists);
   const liked = useFavoritesStore((s) => s.isFavorited(track.id));
   const menuRef = useRef<HTMLDivElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<'main' | 'playlists'>('main');
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
@@ -56,6 +58,9 @@ function MenuPanel({ track }: { track: Track }) {
   // Dismiss on outside press, Escape, scroll and resize; arrow keys move between items
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
+      // The phone backdrop closes on its own click: closing here would unmount it before
+      // the tap's click fires, and that click would land on (and play) the row underneath
+      if (backdropRef.current?.contains(e.target as Node)) return;
       if (!menuRef.current?.contains(e.target as Node)) close();
     };
     const onKeyDown = (e: KeyboardEvent) => {
@@ -88,9 +93,12 @@ function MenuPanel({ track }: { track: Track }) {
     menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus({ preventScroll: true });
   }, [view, pos]);
 
+  /** The click is the finger lifting from the long-press that opened the menu, not a choice. */
+  const isOpeningTap = () => byTouch && (Date.now() - openedAt < OPEN_GRACE_MS || isLongPressTail());
+
   /** Runs a menu action unless the click is the tail of the long-press that opened the menu. */
   const act = (fn: () => void, keepOpen = false) => () => {
-    if (byTouch && Date.now() - openedAt < OPEN_GRACE_MS) return;
+    if (isOpeningTap()) return;
     fn();
     if (!keepOpen) close();
   };
@@ -183,7 +191,14 @@ function MenuPanel({ track }: { track: Track }) {
 
   if (!isDesktop) {
     return (
-      <div className="fixed inset-0 z-[70] bg-black/60" role="presentation">
+      <div
+        ref={backdropRef}
+        className="fixed inset-0 z-[70] bg-black/60"
+        role="presentation"
+        onClick={(e) => {
+          if (e.target === e.currentTarget && !isOpeningTap()) close();
+        }}
+      >
         <div
           ref={menuRef}
           role="menu"

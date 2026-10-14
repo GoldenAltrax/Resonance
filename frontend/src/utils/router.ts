@@ -37,12 +37,21 @@ export function pathFor(page: Page, param?: string): string {
   return STATIC_PATHS[page];
 }
 
+/** decodeURIComponent that keeps a malformed segment (e.g. a typed "100%") as-is instead of throwing during render. */
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 export function parseRoute(pathname: string): Route {
   const path = pathname.replace(/\/+$/, '') || '/';
   const detail = path.match(/^\/playlists\/([^/]+)$/);
-  if (detail?.[1]) return { page: 'playlist-detail', playlistId: decodeURIComponent(detail[1]) };
+  if (detail?.[1]) return { page: 'playlist-detail', playlistId: decodeSegment(detail[1]) };
   const album = path.match(/^\/albums\/(.+)$/);
-  if (album?.[1]) return { page: 'albums', album: decodeURIComponent(album[1]) };
+  if (album?.[1]) return { page: 'albums', album: decodeSegment(album[1]) };
   const admin = path.match(/^\/admin\/([\w-]+)$/);
   if (admin?.[1] && (ADMIN_TABS as string[]).includes(admin[1])) return { page: 'admin', adminTab: admin[1] as AdminTab };
   // Add music used to be its own page

@@ -4,6 +4,9 @@ import type { AcousticDuplicate } from '@/types/index';
 // Use environment variable for API URL, fallback to relative path for dev proxy
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
+/** Window event: the token was replaced and the old one revoked (password change). */
+export const STREAM_TOKEN_REPLACED = 'resonance:stream-token-replaced';
+
 interface ApiErrorBody {
   error?: string;
   details?: unknown;
@@ -210,6 +213,8 @@ class ApiClient {
 
   // Audio elements can't send an Authorization header, so the token goes in the query
   // string. The server streams the file with Range support (seeking, progressive playback).
+  // A URL keeps its token, so after the old token is revoked (STREAM_TOKEN_REPLACED) the
+  // player has to reload its decks.
   getStreamUrl(id: string): string {
     const token = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
     return `${API_URL}/tracks/${id}/stream${token}`;

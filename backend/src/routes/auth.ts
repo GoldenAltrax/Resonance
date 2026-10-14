@@ -91,32 +91,44 @@ export async function authRoutes(app: FastifyInstance) {
         }
       }
 
-      // Claim one use of the invite code atomically: the check above and this increment are
-      // separate statements, so concurrent signups could otherwise exceed maxUses
-      if (validInviteCode) {
-        const claimed = db.update(inviteCodes)
-          .set({ usedCount: sql`${inviteCodes.usedCount} + 1` })
-          .where(and(
-            eq(inviteCodes.id, validInviteCode.id),
-            or(isNull(inviteCodes.maxUses), gt(inviteCodes.maxUses, inviteCodes.usedCount)),
-          ))
-          .run();
-        if (claimed.changes === 0) {
-          return reply.status(403).send({ error: 'Invalid or expired invitation code' });
-        }
-      }
-
       // Hash password
       const passwordHash = await bcrypt.hash(body.password, 12);
 
-      // Create user
+      // Claim one use of the invite code and create the user in one transaction. The claim is
+      // conditional because the check above is a separate statement (concurrent signups could
+      // exceed maxUses), and if the insert fails (a concurrent signup took the name) the use
+      // is rolled back instead of burned.
       const userId = uuidv4();
-      await db.insert(users).values({
-        id: userId,
-        username: body.username,
-        email: body.email,
-        passwordHash,
-      });
+      let created: boolean;
+      try {
+        created = db.transaction((tx) => {
+          if (validInviteCode) {
+            const claimed = tx.update(inviteCodes)
+              .set({ usedCount: sql`${inviteCodes.usedCount} + 1` })
+              .where(and(
+                eq(inviteCodes.id, validInviteCode.id),
+                or(isNull(inviteCodes.maxUses), gt(inviteCodes.maxUses, inviteCodes.usedCount)),
+              ))
+              .run();
+            if (claimed.changes === 0) return false;
+          }
+          tx.insert(users).values({
+            id: userId,
+            username: body.username,
+            email: body.email,
+            passwordHash,
+          }).run();
+          return true;
+        });
+      } catch (err) {
+        if ((err as { code?: string }).code === 'SQLITE_CONSTRAINT_UNIQUE') {
+          return reply.status(400).send({ error: 'Username or email already in use' });
+        }
+        throw err;
+      }
+      if (!created) {
+        return reply.status(403).send({ error: 'Invalid or expired invitation code' });
+      }
 
       // Generate token
       // JWT expires in 7 days

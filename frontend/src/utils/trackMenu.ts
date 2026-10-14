@@ -13,6 +13,11 @@ let longPressed = false;
 // Android sends no click after a long-press and a stale flag would eat the next real tap.
 let suppressClickUntil = 0;
 
+/** Whether a click now is the finger lifting from a long-press (wherever that click lands). */
+export function isLongPressTail() {
+  return Date.now() < suppressClickUntil;
+}
+
 function cancelTimer() {
   if (timer) clearTimeout(timer);
   timer = null;

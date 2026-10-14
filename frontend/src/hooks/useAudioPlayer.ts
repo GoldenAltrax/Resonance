@@ -3,7 +3,7 @@ import { usePlayerStore } from '@/stores/playerStore';
 import { usePlaybackStore } from '@/stores/playbackStore';
 import { usePlaylistStore } from '@/stores/playlistStore';
 import { audioEngine } from '@/services/audioEngine';
-import { api, Track } from '@/services/api';
+import { api, Track, STREAM_TOKEN_REPLACED } from '@/services/api';
 import { toast } from '@/stores/toastStore';
 
 const RESUME_KEY = 'resonance-resume';
@@ -201,6 +201,14 @@ export function useAudioPlayer() {
       audioEngine.refreshTracks(loaded);
     });
 
+    // The old token was revoked: both decks' stream URLs carry it, so the next Range request
+    // (a seek, or the browser fetching more) would fail. Reload the current track where it is;
+    // load() drops the preloaded deck, which is preloaded again with the new token.
+    const reloadStreams = () => {
+      if (player.getState().currentTrack) loadCurrent(audioEngine.currentTime);
+    };
+    window.addEventListener(STREAM_TOKEN_REPLACED, reloadStreams);
+
     // Radio: keep a few similar tracks queued ahead
     const maybeRefillRadio = () => {
       const s = player.getState();
@@ -304,6 +312,7 @@ export function useAudioPlayer() {
       unsubscribe();
       unsubscribePosition();
       unsubscribeLibrary();
+      window.removeEventListener(STREAM_TOKEN_REPLACED, reloadStreams);
       audioEngine.setCallbacks(null);
       gestureEvents.forEach((e) => document.removeEventListener(e, unlock, { capture: true }));
       window.removeEventListener('pagehide', saveOnHide);

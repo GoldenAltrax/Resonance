@@ -86,6 +86,13 @@ const SortableTrackRow = ({
           dragDisabled ? 'invisible' : 'group-hover:opacity-100 [@media(hover:none)]:opacity-100'
         }`}
         onClick={(e) => e.stopPropagation()}
+        // Holding the grip before dragging is a drag, not a long-press for the track menu
+        // (the drag sensor listens to pointer events, which these don't affect)
+        onTouchStart={(e) => e.stopPropagation()}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
       >
         <GripVertical className="w-4 h-4" />
       </div>

@@ -16,6 +16,9 @@ describe('classifyUploadUrl', () => {
       '/uploads/images/%2e%2e/audio/x.mp3',
       '/uploads/images/..%2faudio/x.mp3',
       '/uploads/images/..%5caudio/x.mp3',
+      '/%75ploads/audio/x.mp3',
+      '/%75%70%6c%6f%61%64%73/audio/x.mp3',
+      '/api/../uploads/audio/x.mp3',
       '/uploads',
     ]) {
       expect(classifyUploadUrl(url), url).toBe('blocked');
