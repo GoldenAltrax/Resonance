@@ -30,8 +30,9 @@ export async function favoriteRoutes(app: FastifyInstance) {
     });
 
     // Combine favorites with track data
+    const trackById = new Map(favoriteTracks.map(t => [t.id, t]));
     const result = userFavorites.map(fav => {
-      const track = favoriteTracks.find(t => t.id === fav.trackId);
+      const track = trackById.get(fav.trackId);
       return {
         ...fav,
         track,
@@ -61,6 +62,7 @@ export async function favoriteRoutes(app: FastifyInstance) {
 
     // Check if track exists in global library (no ownership check)
     const track = await db.query.tracks.findFirst({
+      columns: { id: true },
       where: eq(tracks.id, trackId),
     });
 

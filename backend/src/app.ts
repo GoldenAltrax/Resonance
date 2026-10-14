@@ -40,6 +40,7 @@ const { historyRoutes } = await import('./routes/history.js');
 const { downloadRoutes } = await import('./routes/downloads.js');
 const { assistantRoutes } = await import('./routes/assistant.js');
 const { startDownloader } = await import('./services/downloader.js');
+const { backfillAnalysis } = await import('./services/ingest.js');
 const { sqlite } = await import('./db/index.js');
 
 const app = Fastify({
@@ -196,6 +197,12 @@ const start = async () => {
     } catch (err) {
       app.log.error(err, 'download queue unavailable (database migrations not applied?)');
     }
+    // Measure loudness for tracks imported before normalization existed (no-op once done)
+    setTimeout(() => {
+      backfillAnalysis()
+        .then((queued) => { if (queued) app.log.info(`analyzing ${queued} track(s) in the background`); })
+        .catch((err) => app.log.error(err, 'analysis backfill failed to start'));
+    }, 30_000).unref();
   } catch (err) {
     app.log.error(err);
     process.exit(1);

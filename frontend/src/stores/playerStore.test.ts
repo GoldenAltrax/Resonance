@@ -29,6 +29,8 @@ const track = (id: string): Track => ({
   bpm: null,
   key: null,
   energy: null,
+  loudness: null,
+  truePeak: null,
   userId: 'u1',
   createdAt: '2026-01-01',
 });
@@ -236,5 +238,18 @@ describe('reset', () => {
     expect(state().currentTrack).toBeNull();
     expect(state().queue).toEqual([]);
     expect(state().volume).toBe(0.4);
+  });
+});
+
+describe('refreshTracks', () => {
+  it('swaps in fresh track data without reloading or reordering', () => {
+    state().play(tracks[1], tracks);
+    const loadId = state().loadId;
+    const fresh = { ...track('b'), title: 'Renamed', loudness: -9, truePeak: 1 };
+    state().refreshTracks([fresh]);
+    expect(state().currentTrack).toBe(fresh);
+    expect(state().queue[1]).toBe(fresh);
+    expect(ids(state().queue)).toEqual(ids(tracks));
+    expect(state().loadId).toBe(loadId);
   });
 });

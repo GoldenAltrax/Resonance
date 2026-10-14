@@ -3,16 +3,20 @@
  * and two tracks can overlap (true crossfade).
  *
  * Signal path when Web Audio is available:
- *   deck A <audio> → MediaElementSource → deckGain A ┐
- *   deck B <audio> → MediaElementSource → deckGain B ┴→ masterGain (volume) → 10× EQ → destination
+ *   deck A <audio> → MediaElementSource → normGain A → deckGain A ┐
+ *   deck B <audio> → MediaElementSource → normGain B → deckGain B ┴→ masterGain (volume) → 10× EQ → destination
+ *
+ * normGain holds the track's loudness-normalization gain; deckGain is the fade/mute level.
  *
  * Volume lives in exactly one place: masterGain when Web Audio is active, otherwise
  * HTMLMediaElement.volume. (Applying both squares the volume curve.)
  *
  * iOS/iPadOS: Web Audio is skipped. Routing a media element through an AudioContext there
- * stops playback when the screen locks, and element.volume is read-only, so EQ and
- * crossfade are unavailable; playback falls back to plain elements with gapless preload.
+ * stops playback when the screen locks, and element.volume is read-only, so EQ, crossfade
+ * and normalization are unavailable; playback falls back to plain elements with gapless preload.
  */
+
+import { dbToLinear, normalizationGainDb, type LoudnessInfo } from '@/utils/loudness';
 
 export interface EngineCallbacks {
   onTimeUpdate: (time: number) => void;
@@ -27,10 +31,17 @@ export interface EngineCallbacks {
   onPlayBlocked: () => void;
 }
 
+/** What the engine needs to know about a track. */
+export interface EngineTrack extends LoudnessInfo {
+  id: string;
+}
+
 interface Deck {
   el: HTMLAudioElement;
+  norm: GainNode | null;
   gain: GainNode | null;
   trackId: string | null;
+  loudness: LoudnessInfo | null;
 }
 
 const EQ_FREQUENCIES = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
@@ -54,6 +65,7 @@ export class AudioEngine {
   private volume = 1;
   private eqEnabled = false;
   private eqGains: number[] = Array(10).fill(0);
+  private normalize = true;
   private fadeTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingStartAt: number | null = null;
   // Set while we pause an element ourselves, so the 'pause' event isn't mistaken for an external pause
@@ -93,7 +105,7 @@ export class AudioEngine {
     const el = new Audio();
     el.preload = 'auto';
     el.crossOrigin = 'anonymous'; // required for Web Audio to read cross-origin (dev proxy) media
-    const deck: Deck = { el, gain: null, trackId: null };
+    const deck: Deck = { el, norm: null, gain: null, trackId: null, loudness: null };
     const isActive = () => this.active === deck;
 
     el.addEventListener('timeupdate', () => {
@@ -181,9 +193,12 @@ export class AudioEngine {
 
       for (const deck of this.decks) {
         const source = ctx.createMediaElementSource(deck.el);
+        const norm = ctx.createGain();
+        norm.gain.value = this.normalizationFactor(deck);
         const gain = ctx.createGain();
         gain.gain.value = deck === this.active ? 1 : 0;
-        source.connect(gain).connect(master);
+        source.connect(norm).connect(gain).connect(master);
+        deck.norm = norm;
         deck.gain = gain;
         deck.el.volume = 1;
       }
@@ -203,12 +218,12 @@ export class AudioEngine {
   }
 
   /** Hard switch to a track on the active deck (or swap to a deck that already preloaded it). */
-  load(trackId: string, url: string, opts: { autoplay: boolean; startAt?: number }) {
+  load(track: EngineTrack, url: string, opts: { autoplay: boolean; startAt?: number }) {
     this.cancelFade();
     this.pendingStartAt = opts.startAt ?? null;
 
     const preloaded = this.inactive;
-    if (preloaded.trackId === trackId && preloaded.el.getAttribute('src')) {
+    if (preloaded.trackId === track.id && preloaded.el.getAttribute('src')) {
       // Gapless: the next track is already buffered on the other deck
       const previous = this.active;
       this.activeIndex = 1 - this.activeIndex;
@@ -224,7 +239,7 @@ export class AudioEngine {
       this.stopDeck(this.inactive);
       const deck = this.active;
       this.pause(deck.el);
-      deck.trackId = trackId;
+      this.assignTrack(deck, track);
       // A restored (paused) session only needs metadata; don't download the whole file on page load
       deck.el.preload = opts.autoplay ? 'auto' : 'metadata';
       deck.el.src = url;
@@ -237,9 +252,9 @@ export class AudioEngine {
   }
 
   /** Overlap the current track with the next one over `seconds`. */
-  crossfadeTo(trackId: string, url: string, seconds: number) {
+  crossfadeTo(track: EngineTrack, url: string, seconds: number) {
     if (!this.ctx || !this.master || seconds <= 0) {
-      this.load(trackId, url, { autoplay: true });
+      this.load(track, url, { autoplay: true });
       return;
     }
     this.cancelFade();
@@ -247,8 +262,8 @@ export class AudioEngine {
 
     const outgoing = this.active;
     const incoming = this.inactive;
-    if (incoming.trackId !== trackId || !incoming.el.getAttribute('src')) {
-      incoming.trackId = trackId;
+    if (incoming.trackId !== track.id || !incoming.el.getAttribute('src')) {
+      this.assignTrack(incoming, track);
       incoming.el.src = url;
       incoming.el.load();
     }
@@ -273,12 +288,12 @@ export class AudioEngine {
   }
 
   /** Buffer the upcoming track on the idle deck so the switch is instant. */
-  preload(trackId: string, url: string) {
+  preload(track: EngineTrack, url: string) {
     if (this.isFading) return;
     const deck = this.inactive;
-    if (deck.trackId === trackId && deck.el.getAttribute('src')) return;
+    if (deck.trackId === track.id && deck.el.getAttribute('src')) return;
     this.pause(deck.el);
-    deck.trackId = trackId;
+    this.assignTrack(deck, track);
     deck.el.preload = 'auto';
     deck.el.src = url;
     deck.el.load();
@@ -345,12 +360,49 @@ export class AudioEngine {
     });
   }
 
+  setNormalization(enabled: boolean) {
+    if (this.normalize === enabled) return;
+    this.normalize = enabled;
+    for (const deck of this.decks) this.applyNormalization(deck);
+    if (!this.master) this.applyVolume();
+  }
+
+  /** Pick up new loudness measurements for tracks already loaded on a deck. */
+  refreshTracks(tracks: EngineTrack[]) {
+    for (const deck of this.decks) {
+      const track = tracks.find((t) => t.id === deck.trackId);
+      if (track) this.assignTrack(deck, track);
+    }
+    if (!this.master) this.applyVolume();
+  }
+
+  private assignTrack(deck: Deck, track: EngineTrack) {
+    deck.trackId = track.id;
+    deck.loudness = { loudness: track.loudness ?? null, truePeak: track.truePeak ?? null };
+    this.applyNormalization(deck);
+  }
+
+  private normalizationFactor(deck: Deck): number {
+    return this.normalize && deck.loudness ? dbToLinear(normalizationGainDb(deck.loudness)) : 1;
+  }
+
+  private applyNormalization(deck: Deck) {
+    if (deck.norm && this.ctx) {
+      deck.norm.gain.setValueAtTime(this.normalizationFactor(deck), this.ctx.currentTime);
+    }
+  }
+
+  /** element.volume for the plain-element fallback; it cannot exceed 1, so boosts are dropped. */
+  private elementVolume(deck: Deck, level: number): number {
+    return Math.min(1, level * this.volume * this.normalizationFactor(deck));
+  }
+
   private applyVolume() {
     if (this.master) {
       this.master.gain.value = this.volume;
     } else {
       // Plain-element fallback (no Web Audio). Ignored by iOS, where volume is hardware-only.
-      for (const deck of this.decks) deck.el.volume = deck === this.active ? this.volume : 0;
+      for (const deck of this.decks) deck.el.volume = deck === this.active ? this.elementVolume(deck, 1) : 0;
     }
   }
 
@@ -359,7 +411,7 @@ export class AudioEngine {
       deck.gain.gain.cancelScheduledValues(this.ctx.currentTime);
       deck.gain.gain.setValueAtTime(level, this.ctx.currentTime);
     } else {
-      deck.el.volume = level * this.volume;
+      deck.el.volume = this.elementVolume(deck, level);
     }
   }
 
@@ -372,6 +424,7 @@ export class AudioEngine {
   private stopDeck(deck: Deck) {
     this.pause(deck.el);
     deck.trackId = null;
+    deck.loudness = null;
     if (deck.el.getAttribute('src')) {
       deck.el.removeAttribute('src');
       deck.el.load(); // releases the network connection and decoder

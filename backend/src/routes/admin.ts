@@ -6,17 +6,7 @@ import { eq, count, desc, sql } from 'drizzle-orm';
 import { adminMiddleware, isAdmin } from '../middleware/auth.js';
 import crypto from 'crypto';
 import { unlink } from 'fs/promises';
-import { resolve, sep } from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const UPLOADS_BASE = resolve(__dirname, '..', '..', 'uploads');
-
-// Resolve a stored upload path ("audio/x.mp3", "images/y.jpg"), refusing anything outside uploads/
-function resolveStoredFilePath(storedPath: string): string | null {
-  const fullPath = resolve(UPLOADS_BASE, storedPath);
-  return fullPath.startsWith(UPLOADS_BASE + sep) ? fullPath : null;
-}
+import { resolveStoredFilePath } from '../services/ingest.js';
 
 // Generate a random invite code with sufficient entropy (8 bytes = 64 bits)
 function generateInviteCode(): string {

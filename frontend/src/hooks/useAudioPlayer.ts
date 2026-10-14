@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { usePlayerStore } from '@/stores/playerStore';
 import { usePlaybackStore } from '@/stores/playbackStore';
+import { usePlaylistStore } from '@/stores/playlistStore';
 import { audioEngine } from '@/services/audioEngine';
 import { api, Track } from '@/services/api';
 import { toast } from '@/stores/toastStore';
@@ -85,7 +86,7 @@ export function useAudioPlayer() {
 
         // Gapless: buffer the next track on the idle deck ahead of time
         if (remaining <= PRELOAD_LEAD_SECONDS && audioEngine.preloadedTrackId() !== upcoming.id) {
-          audioEngine.preload(upcoming.id, streamUrl(upcoming));
+          audioEngine.preload(upcoming, streamUrl(upcoming));
         }
       },
       onDurationChange: (duration) => playback.setDuration(duration),
@@ -147,10 +148,10 @@ export function useAudioPlayer() {
       if (crossfadeRequested && s.autoAdvance && s.isPlaying) {
         crossfadeRequested = false;
         const remaining = Math.max(0.5, audioEngine.duration - audioEngine.currentTime);
-        audioEngine.crossfadeTo(track.id, streamUrl(track), Math.min(remaining, s.crossfadeDuration));
+        audioEngine.crossfadeTo(track, streamUrl(track), Math.min(remaining, s.crossfadeDuration));
       } else {
         crossfadeRequested = false;
-        audioEngine.load(track.id, streamUrl(track), { autoplay: s.isPlaying, startAt });
+        audioEngine.load(track, streamUrl(track), { autoplay: s.isPlaying, startAt });
       }
     };
 
@@ -178,12 +179,26 @@ export function useAudioPlayer() {
       if (s.eqEnabled !== prev.eqEnabled || s.eqGains !== prev.eqGains) {
         audioEngine.setEq(s.eqEnabled, s.eqGains);
       }
+      if (s.normalizeVolume !== prev.normalizeVolume) {
+        audioEngine.setNormalization(s.normalizeVolume);
+      }
       if (s.currentTrack !== prev.currentTrack || s.isPlaying !== prev.isPlaying) {
         updateMediaSession(s.currentTrack, s.isPlaying);
       }
       if (s.queueIndex !== prev.queueIndex || s.queue !== prev.queue) {
         maybeRefillRadio();
       }
+    });
+
+    // The persisted session holds track objects from an earlier visit; refresh them from
+    // the library so edits and new loudness measurements apply without reloading audio.
+    const unsubscribeLibrary = usePlaylistStore.subscribe((p, prev) => {
+      if (p.library === prev.library || p.library.length === 0) return;
+      const s = player.getState();
+      s.refreshTracks(p.library);
+      const fresh = player.getState();
+      const loaded = [fresh.currentTrack, fresh.peekNext()].filter((t): t is Track => t !== null);
+      audioEngine.refreshTracks(loaded);
     });
 
     // Radio: keep a few similar tracks queued ahead
@@ -273,6 +288,7 @@ export function useAudioPlayer() {
     const initial = player.getState();
     audioEngine.setVolume(initial.isMuted ? 0 : initial.volume);
     audioEngine.setEq(initial.eqEnabled, initial.eqGains);
+    audioEngine.setNormalization(initial.normalizeVolume);
     if (initial.currentTrack) {
       // Never auto-play on page load
       if (initial.isPlaying) player.setState({ isPlaying: false });
@@ -285,6 +301,7 @@ export function useAudioPlayer() {
     return () => {
       unsubscribe();
       unsubscribePosition();
+      unsubscribeLibrary();
       audioEngine.setCallbacks(null);
       gestureEvents.forEach((e) => document.removeEventListener(e, unlock, { capture: true }));
       window.removeEventListener('pagehide', saveOnHide);

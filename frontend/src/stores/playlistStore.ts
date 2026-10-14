@@ -5,7 +5,6 @@ import { toast } from '@/stores/toastStore';
 interface PlaylistState {
   playlists: Playlist[];
   currentPlaylist: PlaylistWithTracks | null;
-  tracks: Track[];
   library: Track[];
   libraryLoading: boolean;
   isLoading: boolean;
@@ -14,7 +13,6 @@ interface PlaylistState {
   // Actions
   fetchPlaylists: () => Promise<void>;
   fetchPlaylist: (id: string) => Promise<void>;
-  fetchTracks: () => Promise<void>;
   fetchLibrary: () => Promise<void>;
   createPlaylist: (name: string, description?: string) => Promise<Playlist>;
   updatePlaylist: (id: string, data: { name?: string; description?: string }) => Promise<void>;
@@ -34,7 +32,6 @@ let _requestedPlaylistId: string | null = null;
 export const usePlaylistStore = create<PlaylistState>((set, get) => ({
   playlists: [],
   currentPlaylist: null,
-  tracks: [],
   library: [],
   libraryLoading: false,
   isLoading: false,
@@ -70,19 +67,6 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
       if (_requestedPlaylistId !== id) return;
       set({
         error: err instanceof Error ? err.message : 'Failed to fetch playlist',
-        isLoading: false,
-      });
-    }
-  },
-
-  fetchTracks: async () => {
-    set({ isLoading: true, error: null });
-    try {
-      const tracks = await api.getTracks();
-      set({ tracks, isLoading: false });
-    } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : 'Failed to fetch tracks',
         isLoading: false,
       });
     }
@@ -185,7 +169,6 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     try {
       const track = await api.uploadTrack(file);
       set((state) => ({
-        tracks: [track, ...state.tracks],
         library: [track, ...state.library],
         isLoading: false,
       }));
@@ -203,7 +186,6 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     try {
       const updatedTrack = await api.updateTrack(id, data);
       set((state) => ({
-        tracks: state.tracks.map((t) => (t.id === id ? updatedTrack : t)),
         library: state.library.map((t) => (t.id === id ? updatedTrack : t)),
         // Also update track in currentPlaylist if present
         currentPlaylist: state.currentPlaylist
@@ -228,7 +210,6 @@ export const usePlaylistStore = create<PlaylistState>((set, get) => ({
     try {
       await api.deleteTrack(id);
       set((state) => ({
-        tracks: state.tracks.filter((t) => t.id !== id),
         library: state.library.filter((t) => t.id !== id),
       }));
       if (!silent) toast.success('Track deleted');

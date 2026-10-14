@@ -516,6 +516,7 @@ export interface UserPreferences {
   repeat?: 'none' | 'one' | 'all';
   crossfadeEnabled?: boolean;
   crossfadeDuration?: number;
+  normalizeVolume?: boolean;
   eqEnabled?: boolean;
   eqGains?: number[];
   eqPreset?: string;
@@ -552,6 +553,9 @@ export interface Track {
   bpm: number | null;
   key: string | null;
   energy: number | null;
+  // Volume normalization (null until the server has measured the track)
+  loudness: number | null; // LUFS
+  truePeak: number | null; // dBTP
   userId: string;
   createdAt: string;
 }

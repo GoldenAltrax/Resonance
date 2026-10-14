@@ -49,8 +49,9 @@ export async function historyRoutes(app: FastifyInstance) {
     });
 
     // Combine history with track data, maintaining order
+    const trackById = new Map(tracksData.map(t => [t.id, t]));
     const result = uniqueHistory.map(h => {
-      const track = tracksData.find(t => t.id === h.trackId);
+      const track = trackById.get(h.trackId);
       return {
         id: h.id,
         trackId: h.trackId,
@@ -71,6 +72,7 @@ export async function historyRoutes(app: FastifyInstance) {
 
       // Verify track exists in global library (no ownership check)
       const track = await db.query.tracks.findFirst({
+        columns: { id: true },
         where: eq(tracks.id, body.trackId),
       });
 

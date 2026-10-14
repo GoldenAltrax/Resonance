@@ -1,30 +1,14 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
-import { mkdir, unlink, writeFile } from 'fs/promises';
-import { join, resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { unlink, writeFile } from 'fs/promises';
+import { join } from 'path';
 import { db, users } from '../db/index.js';
 import { eq } from 'drizzle-orm';
 import { authMiddleware } from '../middleware/auth.js';
-
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const IMAGES_DIR = resolve(__dirname, '..', '..', 'uploads', 'images');
-const UPLOADS_BASE = resolve(__dirname, '..', '..', 'uploads');
-
-// Ensure images directory exists
-await mkdir(IMAGES_DIR, { recursive: true });
+import { IMAGES_DIR, resolveStoredFilePath } from '../services/ingest.js';
 
 // Allowed image extensions whitelist
 const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
-
-// Resolve path from stored path (e.g., "images/avatar-uuid.jpg")
-function resolveStoredFilePath(storedPath: string): string | null {
-  const fullPath = resolve(UPLOADS_BASE, storedPath);
-  if (!fullPath.startsWith(UPLOADS_BASE)) {
-    return null;
-  }
-  return fullPath;
-}
 
 // Validate and sanitize file extension
 function getSafeExtension(filename: string): string {
@@ -44,6 +28,7 @@ const preferencesSchema = z.object({
   repeat: z.enum(['none', 'one', 'all']).optional(),
   crossfadeEnabled: z.boolean().optional(),
   crossfadeDuration: z.number().min(0).max(12).optional(),
+  normalizeVolume: z.boolean().optional(),
   eqEnabled: z.boolean().optional(),
   eqGains: z.array(z.number().min(-12).max(12)).length(10).optional(),
   eqPreset: z.string().optional(),

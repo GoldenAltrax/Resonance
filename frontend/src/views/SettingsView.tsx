@@ -7,17 +7,59 @@ import { usePlayerStore } from '@/stores/playerStore';
 import { audioEngine } from '@/services/audioEngine';
 import { navigate } from '@/utils/router';
 
-/** Crossfade preferences (synced to the server like other player settings). */
+const Switch = ({ checked, label, disabled, onChange }: {
+  checked: boolean;
+  label: string;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+}) => (
+  <button
+    role="switch"
+    aria-checked={checked}
+    aria-label={label}
+    disabled={disabled}
+    onClick={() => onChange(!checked)}
+    className={`relative inline-flex items-center w-11 h-6 rounded-full transition-colors flex-shrink-0 disabled:opacity-40 ${
+      checked ? 'bg-white' : 'bg-zinc-700'
+    }`}
+  >
+    <span
+      className={`inline-block w-5 h-5 bg-black rounded-full shadow transition-transform ${
+        checked ? 'translate-x-5' : 'translate-x-0.5'
+      }`}
+    />
+  </button>
+);
+
+/** Playback preferences (synced to the server like other player settings). */
 const PlaybackSettings = () => {
   const crossfadeEnabled = usePlayerStore((s) => s.crossfadeEnabled);
   const crossfadeDuration = usePlayerStore((s) => s.crossfadeDuration);
   const setCrossfade = usePlayerStore((s) => s.setCrossfade);
+  const normalizeVolume = usePlayerStore((s) => s.normalizeVolume);
+  const setNormalizeVolume = usePlayerStore((s) => s.setNormalizeVolume);
   const supported = audioEngine.supportsWebAudio;
 
   return (
     <section className="bg-zinc-900/20 border border-zinc-800/50 rounded-3xl p-6 md:p-8 mb-8">
       <h3 className="text-sm font-medium text-zinc-500 uppercase tracking-widest mb-5">Playback</h3>
       <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-white font-medium">Normalize volume</p>
+          <p className="text-zinc-500 text-sm">
+            {supported
+              ? 'Play every song at the same loudness, so you don\'t have to adjust the volume between tracks.'
+              : 'Not available in this browser (iOS Safari).'}
+          </p>
+        </div>
+        <Switch
+          checked={normalizeVolume}
+          label="Normalize volume"
+          disabled={!supported}
+          onChange={setNormalizeVolume}
+        />
+      </div>
+      <div className="flex items-center justify-between gap-4 mt-6">
         <div>
           <p className="text-white font-medium">Crossfade</p>
           <p className="text-zinc-500 text-sm">
@@ -26,22 +68,12 @@ const PlaybackSettings = () => {
               : 'Not available in this browser (iOS Safari). Tracks still play back to back without gaps.'}
           </p>
         </div>
-        <button
-          role="switch"
-          aria-checked={crossfadeEnabled}
-          aria-label="Crossfade"
+        <Switch
+          checked={crossfadeEnabled}
+          label="Crossfade"
           disabled={!supported}
-          onClick={() => setCrossfade(!crossfadeEnabled)}
-          className={`relative inline-flex items-center w-11 h-6 rounded-full transition-colors flex-shrink-0 disabled:opacity-40 ${
-            crossfadeEnabled ? 'bg-white' : 'bg-zinc-700'
-          }`}
-        >
-          <span
-            className={`inline-block w-5 h-5 bg-black rounded-full shadow transition-transform ${
-              crossfadeEnabled ? 'translate-x-5' : 'translate-x-0.5'
-            }`}
-          />
-        </button>
+          onChange={(enabled) => setCrossfade(enabled)}
+        />
       </div>
       {crossfadeEnabled && supported && (
         <div className="mt-5 flex items-center gap-4">

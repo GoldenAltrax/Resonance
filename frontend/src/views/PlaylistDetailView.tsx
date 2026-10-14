@@ -15,7 +15,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { usePlaylistStore } from '@/stores/playlistStore';
-import { usePlayerStore } from '@/stores/playerStore';
+import { usePlayerStore, shuffleArray } from '@/stores/playerStore';
 import { useAuthStore } from '@/stores/authStore';
 import { Track, api } from '@/services/api';
 import { playlistCoverUrl } from '@/utils/cover';
@@ -231,7 +231,7 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
   const handleShuffle = () => {
     const tracks = currentPlaylist?.tracks || [];
     if (tracks.length > 0) {
-      const shuffled = [...tracks].sort(() => Math.random() - 0.5);
+      const shuffled = shuffleArray(tracks);
       if (shuffled[0]) {
         play(shuffled[0], shuffled);
       }

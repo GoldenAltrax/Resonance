@@ -5,13 +5,15 @@
  */
 import { v4 as uuidv4 } from 'uuid';
 import { mkdir, rename, unlink, writeFile } from 'fs/promises';
-import { join, resolve, extname, basename } from 'path';
+import { join, resolve, extname, basename, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { parseFile } from 'music-metadata';
 import { db, tracks } from '../db/index.js';
+import { eq, isNull, or } from 'drizzle-orm';
 import { generateFingerprint, lookupAcoustID, calculateDuplicateScore } from '../utils/fingerprint.js';
+import { ANALYSIS_FILTER, parseVolumeStats, energyFromMeanVolume } from '../utils/loudness.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -24,6 +26,12 @@ export const TEMP_DIR = join(UPLOADS_BASE, 'temp');
 await mkdir(AUDIO_DIR, { recursive: true });
 await mkdir(IMAGES_DIR, { recursive: true });
 await mkdir(TEMP_DIR, { recursive: true });
+
+/** Absolute path for a stored relative path ("audio/x.mp3"), or null if it escapes the uploads directory. */
+export function resolveStoredFilePath(storedPath: string): string | null {
+  const fullPath = resolve(UPLOADS_BASE, storedPath);
+  return fullPath.startsWith(UPLOADS_BASE + sep) ? fullPath : null;
+}
 
 /** Formats stored as-is when the caller asks to keep the original (all play natively in browsers, incl. iOS). */
 const KEEPABLE_EXTENSIONS = ['mp3', 'm4a', 'aac'];
@@ -74,36 +82,36 @@ async function compressAudio(inputPath: string, outputPath: string): Promise<voi
   }
 }
 
-// Analyze audio for BPM, key, and energy using ffprobe
+// Analyze audio: energy (Radio), loudness and true peak (volume normalization), BPM/key from tags
 export interface AudioAnalysis {
   bpm: number | null;
   key: string | null;
   energy: number | null;
+  loudness: number | null;
+  truePeak: number | null;
 }
 
 export async function analyzeAudio(filePath: string): Promise<AudioAnalysis> {
-  const result: AudioAnalysis = { bpm: null, key: null, energy: null };
+  const result: AudioAnalysis = { bpm: null, key: null, energy: null, loudness: null, truePeak: null };
 
   try {
-    // Try to get audio stats for energy calculation
+    // One decode for everything: volumedetect (energy) and EBU R128 (loudness, true peak)
     try {
-      const { stderr: volumeStats } = await execFileAsync('ffmpeg', [
+      const { stderr } = await execFileAsync('ffmpeg', [
+        '-nostats', '-hide_banner',
         '-i', filePath,
-        '-af', 'volumedetect',
+        '-vn',
+        '-af', ANALYSIS_FILTER,
         '-f', 'null',
         '-'
       ], { maxBuffer: 10 * 1024 * 1024 } as { maxBuffer: number });
 
-      // Parse mean volume to calculate energy (0-100 scale)
-      const meanMatch = volumeStats?.match(/mean_volume:\s*(-?\d+\.?\d*)\s*dB/);
-      if (meanMatch && meanMatch[1]) {
-        const meanDb = parseFloat(meanMatch[1]);
-        // Convert dB to 0-100 scale (typical range is -60dB to 0dB)
-        // -60dB = 0 energy, 0dB = 100 energy
-        result.energy = Math.max(0, Math.min(100, Math.round((meanDb + 60) * (100 / 60))));
-      }
+      const stats = parseVolumeStats(stderr);
+      result.energy = energyFromMeanVolume(stats.meanVolume);
+      result.loudness = stats.loudness;
+      result.truePeak = stats.truePeak;
     } catch {
-      // Volume detection failed, leave energy as null
+      // Analysis failed, leave the measurements as null
     }
 
     // Try to extract BPM from metadata (some files have it in ID3 tags)
@@ -262,6 +270,8 @@ export async function ingestAudioFile(opts: IngestOptions): Promise<IngestResult
       bpm: analysis.bpm,
       key: analysis.key,
       energy: analysis.energy,
+      loudness: analysis.loudness,
+      truePeak: analysis.truePeak,
       userId,
       acoustidFingerprint: fpFingerprint,
       acoustidId: fpAcoustidId,
@@ -275,4 +285,51 @@ export async function ingestAudioFile(opts: IngestOptions): Promise<IngestResult
     await removeQuietly(coverPath);
     throw error;
   }
+}
+
+let backfillRunning = false;
+
+/**
+ * Analyze tracks that are missing measurements (older imports predate loudness analysis).
+ * Runs in the background, one track at a time; a second call while one is running is a no-op.
+ * Returns how many tracks were queued, or null if a backfill is already running.
+ */
+export async function backfillAnalysis(): Promise<number | null> {
+  if (backfillRunning) return null;
+  backfillRunning = true;
+
+  let pending: { id: string; filePath: string }[];
+  try {
+    pending = await db.select({ id: tracks.id, filePath: tracks.filePath })
+      .from(tracks)
+      .where(or(isNull(tracks.energy), isNull(tracks.loudness)));
+  } catch (error) {
+    backfillRunning = false;
+    throw error;
+  }
+
+  if (pending.length === 0) {
+    backfillRunning = false;
+    return 0;
+  }
+
+  void (async () => {
+    let analyzed = 0;
+    let failed = 0;
+    for (const track of pending) {
+      try {
+        const filePath = resolveStoredFilePath(track.filePath);
+        if (!filePath) throw new Error(`invalid file path ${track.filePath}`);
+        const analysis = await analyzeAudio(filePath);
+        await db.update(tracks).set(analysis).where(eq(tracks.id, track.id));
+        analyzed++;
+      } catch (error) {
+        failed++;
+        console.error(`Failed to analyze track ${track.id}:`, error);
+      }
+    }
+    console.log(`Analysis backfill complete: ${analyzed} analyzed, ${failed} failed of ${pending.length}`);
+  })().finally(() => { backfillRunning = false; });
+
+  return pending.length;
 }

@@ -18,7 +18,7 @@ export async function searchRoutes(app: FastifyInstance) {
 
     const searchTerm = `%${q.trim().toLowerCase()}%`;
     const parsedLimit = parseInt(limitStr || '20', 10);
-    const limit = Math.min(isNaN(parsedLimit) ? 20 : parsedLimit, 50);
+    const limit = isNaN(parsedLimit) ? 20 : Math.max(1, Math.min(parsedLimit, 50)); // LIMIT -1 means unlimited in SQLite
     const searchType = type || 'all'; // 'all', 'tracks', 'playlists'
 
     const results: {
@@ -70,9 +70,9 @@ export async function searchRoutes(app: FastifyInstance) {
     const { limit: limitStr, offset: offsetStr } = request.query;
 
     const rawLimit = parseInt(limitStr || '50', 10);
-    const limit = Math.min(isNaN(rawLimit) ? 50 : rawLimit, 100);
+    const limit = isNaN(rawLimit) ? 50 : Math.max(1, Math.min(rawLimit, 100));
     const parsedOffset = parseInt(offsetStr || '0', 10);
-    const offset = isNaN(parsedOffset) ? 0 : parsedOffset;
+    const offset = isNaN(parsedOffset) ? 0 : Math.max(0, parsedOffset);
 
     const allTracks = await db
       .select(trackPublicSelect)

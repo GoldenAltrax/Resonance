@@ -3,14 +3,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { createWriteStream } from 'fs';
 import { unlink } from 'fs/promises';
 import { pipeline } from 'stream/promises';
-import { join, resolve } from 'path';
+import { join } from 'path';
 import { parseFile } from 'music-metadata';
 import { z } from 'zod';
 import { db, tracks, favorites, playHistory, trackSkips, trackPublicColumns } from '../db/index.js';
-import { eq, ne, sql, and } from 'drizzle-orm';
+import { eq, ne, sql, and, isNull } from 'drizzle-orm';
 import { authMiddleware, adminMiddleware } from '../middleware/auth.js';
 import { generateFingerprint, lookupAcoustID } from '../utils/fingerprint.js';
-import { ingestAudioFile, analyzeAudio, TEMP_DIR, UPLOADS_BASE } from '../services/ingest.js';
+import { ingestAudioFile, backfillAnalysis, resolveStoredFilePath, TEMP_DIR, UPLOADS_BASE } from '../services/ingest.js';
 
 // Schema for logging a track skip
 const skipTrackSchema = z.object({
@@ -24,18 +24,6 @@ const updateTrackSchema = z.object({
   album: z.string().max(200).trim().nullable().optional(),
 });
 
-
-// Resolve path from stored filePath (e.g., "audio/uuid.mp3")
-function resolveStoredFilePath(storedPath: string): string | null {
-  // Stored paths are like "audio/filename.mp3" - resolve relative to uploads base
-  const fullPath = resolve(UPLOADS_BASE, storedPath);
-
-  // Verify the resolved path is still within the uploads directory
-  if (!fullPath.startsWith(UPLOADS_BASE)) {
-    return null;
-  }
-  return fullPath;
-}
 
 // Musical key compatibility map (for Radio mode similarity matching)
 const KEY_COMPATIBILITY: Record<string, string[]> = {
@@ -221,6 +209,7 @@ export async function trackRoutes(app: FastifyInstance) {
     const { id } = request.params;
 
     const track = await db.query.tracks.findFirst({
+      columns: { filePath: true, coverArt: true },
       where: eq(tracks.id, id),
     });
 
@@ -260,6 +249,7 @@ export async function trackRoutes(app: FastifyInstance) {
     const { id } = request.params;
 
     const track = await db.query.tracks.findFirst({
+      columns: { coverArt: true },
       where: eq(tracks.id, id),
     });
 
@@ -278,6 +268,7 @@ export async function trackRoutes(app: FastifyInstance) {
     const { id } = request.params;
 
     const track = await db.query.tracks.findFirst({
+      columns: { filePath: true },
       where: eq(tracks.id, id),
     });
 
@@ -306,7 +297,7 @@ export async function trackRoutes(app: FastifyInstance) {
     const { id } = request.params;
     const { userId } = request.user as { userId: string };
     const limitRaw = parseInt(request.query.limit || '30', 10);
-    const limit = Math.min(limitRaw, 50); // cap at 50
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(limitRaw, 50)) : 30; // 1–50
 
     // Comma-separated IDs to exclude (already in queue)
     const excludeIds = request.query.excludeIds
@@ -433,15 +424,14 @@ export async function trackRoutes(app: FastifyInstance) {
       return { track, score };
     });
 
-    // Sort by score descending, randomize within tiers for variety
-    scoredTracks.sort((a, b) => {
-      const tierA = Math.floor(a.score / 20);
-      const tierB = Math.floor(b.score / 20);
-      if (tierA !== tierB) {
-        return tierB - tierA;
-      }
-      return Math.random() - 0.5;
-    });
+    // Sort by score tier descending, random order within a tier for variety.
+    // Shuffle first, then stable-sort by tier (a random comparator is biased and inconsistent).
+    const tier = (score: number) => Math.floor(score / 20);
+    for (let i = scoredTracks.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [scoredTracks[i], scoredTracks[j]] = [scoredTracks[j]!, scoredTracks[i]!];
+    }
+    scoredTracks.sort((a, b) => tier(b.score) - tier(a.score));
 
     // Apply artist variety: max 2 tracks per artist in the result
     const artistCount = new Map<string, number>();
@@ -485,6 +475,7 @@ export async function trackRoutes(app: FastifyInstance) {
     }
 
     const track = await db.query.tracks.findFirst({
+      columns: { id: true },
       where: eq(tracks.id, id),
     });
 
@@ -502,75 +493,31 @@ export async function trackRoutes(app: FastifyInstance) {
     return reply.status(201).send({ ok: true });
   });
 
-  // Analyze existing tracks - ADMIN ONLY (for migrating existing library)
+  // Analyze tracks missing energy/loudness - ADMIN ONLY (also runs automatically at startup)
   app.post('/analyze-all', {
     preHandler: adminMiddleware,
   }, async (_request: FastifyRequest, reply: FastifyReply) => {
-    // Get all tracks that haven't been analyzed yet (energy is null)
-    const unanalyzedTracks = await db.query.tracks.findMany({
-      columns: { id: true, filePath: true, energy: true },
-    });
-    const tracksToAnalyze = unanalyzedTracks.filter(t => t.energy === null);
-
-    if (tracksToAnalyze.length === 0) {
-      return reply.send({
-        message: 'All tracks already analyzed',
-        analyzed: 0,
-        total: unanalyzedTracks.length,
-      });
+    const queued = await backfillAnalysis();
+    if (queued === null) {
+      return reply.status(202).send({ message: 'Analysis already running', analyzed: 0, failed: 0, total: 0 });
     }
-
-    // Return immediately — analysis runs in the background (can take minutes for a large library)
-    reply.status(202).send({
-      message: 'Analysis started',
-      analyzed: 0,
-      failed: 0,
-      total: tracksToAnalyze.length,
-    });
-
-    let analyzed = 0;
-    let failed = 0;
-
-    for (const track of tracksToAnalyze) {
-      try {
-        const filePath = resolveStoredFilePath(track.filePath);
-        if (!filePath) {
-          console.warn('Invalid file path for track analysis:', track.filePath);
-          failed++;
-          continue;
-        }
-        const analysis = await analyzeAudio(filePath);
-
-        await db.update(tracks)
-          .set({
-            bpm: analysis.bpm,
-            key: analysis.key,
-            energy: analysis.energy,
-          })
-          .where(eq(tracks.id, track.id));
-
-        analyzed++;
-        console.log(`Analyzed track ${track.id}: BPM=${analysis.bpm}, Key=${analysis.key}, Energy=${analysis.energy}`);
-      } catch (error) {
-        failed++;
-        console.error(`Failed to analyze track ${track.id}:`, error);
-      }
+    if (queued === 0) {
+      return reply.send({ message: 'All tracks already analyzed', analyzed: 0, failed: 0, total: 0 });
     }
-
-    console.log(`Analysis complete: ${analyzed} analyzed, ${failed} failed of ${tracksToAnalyze.length}`);
+    // Analysis runs in the background (can take minutes for a large library)
+    return reply.status(202).send({ message: 'Analysis started', analyzed: 0, failed: 0, total: queued });
   });
 
   // Fingerprint existing tracks that haven't been fingerprinted yet — ADMIN ONLY
   app.post('/fingerprint-all', {
     preHandler: adminMiddleware,
   }, async (_request: FastifyRequest, reply: FastifyReply) => {
-    const allTracks = await db.query.tracks.findMany({
-      columns: { id: true, filePath: true, acoustidFingerprint: true },
-    });
-    const toFingerprint = allTracks.filter(t => !t.acoustidFingerprint);
+    const toFingerprint = await db.select({ id: tracks.id, filePath: tracks.filePath })
+      .from(tracks)
+      .where(isNull(tracks.acoustidFingerprint));
 
     if (toFingerprint.length === 0) {
-      return reply.send({ message: 'All tracks already fingerprinted', processed: 0, total: allTracks.length });
+      return reply.send({ message: 'All tracks already fingerprinted', processed: 0, total: 0 });
     }
 
     // Return immediately — fingerprinting runs in the background
@@ -631,6 +578,7 @@ export async function trackRoutes(app: FastifyInstance) {
     }
 
     const track = await db.query.tracks.findFirst({
+      columns: { id: true },
       where: eq(tracks.id, id),
     });
 
@@ -661,6 +609,7 @@ export async function trackRoutes(app: FastifyInstance) {
     const { id } = request.params;
 
     const track = await db.query.tracks.findFirst({
+      columns: { filePath: true },
       where: eq(tracks.id, id),
     });
 
@@ -674,7 +623,7 @@ export async function trackRoutes(app: FastifyInstance) {
     }
 
     try {
-      const metadata = await parseFile(filePath);
+      const metadata = await parseFile(filePath, { skipCovers: true });
       let lyrics: string | null = null;
       let synced: { time: number; text: string }[] | null = null;
 

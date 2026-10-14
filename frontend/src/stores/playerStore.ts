@@ -28,6 +28,7 @@ const _extractPrefs = (s: PlayerState): UserPreferences => ({
   repeat: s.repeat,
   crossfadeEnabled: s.crossfadeEnabled,
   crossfadeDuration: s.crossfadeDuration,
+  normalizeVolume: s.normalizeVolume,
   eqEnabled: s.eqEnabled,
   eqGains: s.eqGains,
   eqPreset: s.eqPreset,
@@ -100,6 +101,8 @@ interface PlayerState {
 
   crossfadeEnabled: boolean;
   crossfadeDuration: number; // seconds (0–12)
+  /** Bring every track to the same loudness (-14 LUFS). */
+  normalizeVolume: boolean;
 
   eqEnabled: boolean;
   eqGains: number[]; // 10 bands: 32,64,125,250,500,1k,2k,4k,8k,16k Hz — each -12 to +12 dB
@@ -129,6 +132,7 @@ interface PlayerState {
   toggleLyrics: () => void;
   toggleQueue: () => void;
   setCrossfade: (enabled: boolean, duration?: number) => void;
+  setNormalizeVolume: (enabled: boolean) => void;
   setEqGain: (bandIndex: number, gain: number) => void;
   setEqPreset: (preset: string, gains: number[]) => void;
   toggleEq: () => void;
@@ -142,6 +146,8 @@ interface PlayerState {
   startRadio: (track: Track, similarTracks: Track[]) => void;
   stopRadio: () => void;
   loadPreferences: (prefs: UserPreferences) => void;
+  /** Swap in fresh copies of tracks (e.g. after the library loads) without touching playback. */
+  refreshTracks: (fresh: Track[]) => void;
   /** Stop playback and forget the session (logout). */
   reset: () => void;
 }
@@ -210,6 +216,7 @@ export const usePlayerStore = create<PlayerState>()(
         showQueue: false,
         crossfadeEnabled: false,
         crossfadeDuration: 3,
+        normalizeVolume: true,
         eqEnabled: false,
         eqGains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         eqPreset: 'Flat',
@@ -353,6 +360,11 @@ export const usePlayerStore = create<PlayerState>()(
           _syncPrefsToServer(_extractPrefs(get()));
         },
 
+        setNormalizeVolume: (enabled) => {
+          set({ normalizeVolume: enabled });
+          _syncPrefsToServer(_extractPrefs(get()));
+        },
+
         setEqGain: (bandIndex, gain) => {
           set((s) => {
             const eqGains = [...s.eqGains];
@@ -485,12 +497,25 @@ export const usePlayerStore = create<PlayerState>()(
           if (prefs.repeat !== undefined) updates.repeat = prefs.repeat;
           if (prefs.crossfadeEnabled !== undefined) updates.crossfadeEnabled = prefs.crossfadeEnabled;
           if (prefs.crossfadeDuration !== undefined) updates.crossfadeDuration = prefs.crossfadeDuration;
+          if (prefs.normalizeVolume !== undefined) updates.normalizeVolume = prefs.normalizeVolume;
           if (prefs.eqEnabled !== undefined) updates.eqEnabled = prefs.eqEnabled;
           if (prefs.eqGains !== undefined) updates.eqGains = prefs.eqGains;
           if (prefs.eqPreset !== undefined) updates.eqPreset = prefs.eqPreset;
           // Shuffle is not applied from the server: it reorders the local queue,
           // which another device's preference shouldn't do silently.
           set(updates);
+        },
+
+        refreshTracks: (fresh) => {
+          if (fresh.length === 0) return;
+          const byId = new Map(fresh.map((t) => [t.id, t]));
+          const swap = (t: Track) => byId.get(t.id) ?? t;
+          const { currentTrack, queue, originalQueue } = get();
+          set({
+            currentTrack: currentTrack ? swap(currentTrack) : null,
+            queue: queue.map(swap),
+            originalQueue: originalQueue ? originalQueue.map(swap) : null,
+          });
         },
 
         reset: () => {
@@ -515,6 +540,7 @@ export const usePlayerStore = create<PlayerState>()(
         repeat: state.repeat,
         crossfadeEnabled: state.crossfadeEnabled,
         crossfadeDuration: state.crossfadeDuration,
+        normalizeVolume: state.normalizeVolume,
         eqEnabled: state.eqEnabled,
         eqGains: state.eqGains,
         eqPreset: state.eqPreset,

@@ -1,31 +1,15 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
-import { mkdir, unlink, writeFile } from 'fs/promises';
-import { join, resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { unlink, writeFile } from 'fs/promises';
+import { join } from 'path';
 import { db, playlists, playlistTracks, tracks, trackPublicColumns } from '../db/index.js';
 import { eq, and, sql } from 'drizzle-orm';
 import { authMiddleware } from '../middleware/auth.js';
-
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
-const IMAGES_DIR = resolve(__dirname, '..', '..', 'uploads', 'images');
-const UPLOADS_BASE = resolve(__dirname, '..', '..', 'uploads');
-
-// Ensure images directory exists
-await mkdir(IMAGES_DIR, { recursive: true });
+import { IMAGES_DIR, resolveStoredFilePath } from '../services/ingest.js';
 
 // Allowed image extensions whitelist
 const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
-
-// Resolve path from stored path (e.g., "images/playlist-uuid.jpg")
-function resolveStoredFilePath(storedPath: string): string | null {
-  const fullPath = resolve(UPLOADS_BASE, storedPath);
-  if (!fullPath.startsWith(UPLOADS_BASE)) {
-    return null;
-  }
-  return fullPath;
-}
 
 // Validate and sanitize file extension
 function getSafeExtension(filename: string): string {
@@ -95,9 +79,8 @@ export async function playlistRoutes(app: FastifyInstance) {
       : [];
 
     // Order tracks by position
-    const orderedTracks = playlistTrackList.map(pt =>
-      trackList.find(t => t.id === pt.trackId)
-    ).filter(Boolean);
+    const trackById = new Map(trackList.map(t => [t.id, t]));
+    const orderedTracks = playlistTrackList.map(pt => trackById.get(pt.trackId)).filter(Boolean);
 
     return reply.send({
       ...playlist,
@@ -200,6 +183,7 @@ export async function playlistRoutes(app: FastifyInstance) {
 
       // Verify track exists in global library (no ownership check)
       const track = await db.query.tracks.findFirst({
+        columns: { id: true },
         where: eq(tracks.id, body.trackId),
       });
 
