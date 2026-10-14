@@ -21,7 +21,7 @@ const SearchView = () => {
 
   const searchSeqRef = useRef(0);
   // Actions only: stable references, no subscription
-  const { play, startRadio } = usePlayerStore.getState();
+  const { startRadio } = usePlayerStore.getState();
   const { isFavorited, toggleFavorite } = useFavoritesStore();
   const [loadingRadio, setLoadingRadio] = useState<string | null>(null);
 
@@ -30,12 +30,8 @@ const SearchView = () => {
     e.stopPropagation();
     setLoadingRadio(track.id);
     try {
-      const response = await api.getSimilarTracks(track.id, { limit: 30 });
-      startRadio(track, response.similarTracks);
-      toast.success(`Radio started based on "${track.title}"`);
-    } catch (err) {
-      toast.error('Failed to start radio');
-      console.error('Radio error:', err);
+      if (await startRadio(track)) toast.success(`Radio started based on "${track.title}"`);
+      else if (usePlayerStore.getState().radioSourceTrackId === track.id) toast.error('Failed to start radio');
     } finally {
       setLoadingRadio(null);
     }
@@ -43,13 +39,11 @@ const SearchView = () => {
 
   // Load recent searches from localStorage
   useEffect(() => {
-    const stored = localStorage.getItem(RECENT_SEARCHES_KEY);
-    if (stored) {
-      try {
-        setRecentSearches(JSON.parse(stored));
-      } catch {
-        // Ignore parse errors
-      }
+    try {
+      const stored = localStorage.getItem(RECENT_SEARCHES_KEY);
+      if (stored) setRecentSearches(JSON.parse(stored));
+    } catch {
+      // Storage blocked or unreadable: start without recent searches
     }
   }, []);
 
@@ -61,7 +55,7 @@ const SearchView = () => {
     setRecentSearches((prev) => {
       const filtered = prev.filter((s) => s.toLowerCase() !== trimmed.toLowerCase());
       const updated = [trimmed, ...filtered].slice(0, MAX_RECENT_SEARCHES);
-      localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
+      try { localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated)); } catch { /* storage blocked */ }
       return updated;
     });
   }, []);
@@ -70,7 +64,7 @@ const SearchView = () => {
   const removeRecentSearch = (term: string) => {
     setRecentSearches((prev) => {
       const updated = prev.filter((s) => s !== term);
-      localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
+      try { localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated)); } catch { /* storage blocked */ }
       return updated;
     });
   };
@@ -123,9 +117,10 @@ const SearchView = () => {
     setQuery(term);
   };
 
-  // Play a track
+  // Play a track: like Spotify and YouTube Music, a song picked from search plays on its
+  // own and is followed by a station of similar songs, not by the other search results
   const handlePlayTrack = (track: Track) => {
-    play(track, results.tracks);
+    void startRadio(track);
   };
 
   const categories = [

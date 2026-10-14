@@ -15,7 +15,7 @@ import { navigate } from '@/utils/router';
 import { trackMenuProps, openTrackMenuFromButton, TRACK_ROW_TOUCH_CLASSES } from '@/utils/trackMenu';
 
 // File size limits
-const MAX_TRACK_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_TRACK_SIZE = 100 * 1024 * 1024; // 100MB, the server's upload limit
 
 // Sort options
 type SortOption = 'title-asc' | 'title-desc' | 'artist-asc' | 'date-newest' | 'date-oldest' | 'duration-asc' | 'duration-desc';
@@ -31,7 +31,8 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
 ];
 
 const getStoredSort = (): SortOption => {
-  const stored = localStorage.getItem('library-sort');
+  let stored: string | null = null;
+  try { stored = localStorage.getItem('library-sort'); } catch { /* storage blocked */ }
   if (stored && SORT_OPTIONS.some(o => o.value === stored)) {
     return stored as SortOption;
   }
@@ -112,7 +113,7 @@ const LibraryView = () => {
   const handleSortChange = (option: SortOption) => {
     setSortOption(option);
     setShowSortDropdown(false);
-    localStorage.setItem('library-sort', option);
+    try { localStorage.setItem('library-sort', option); } catch { /* storage blocked */ }
   };
 
   // Determine if we should use virtualization
@@ -208,11 +209,11 @@ const LibraryView = () => {
 
     const fileArray = Array.from(files);
 
-    // Validate file sizes (50MB max per track)
+    // Validate file sizes (100MB max per track)
     const oversizedFiles = fileArray.filter((file) => file.size > MAX_TRACK_SIZE);
     if (oversizedFiles.length > 0) {
       const names = oversizedFiles.slice(0, 3).map((f) => f.name).join(', ');
-      toast.error(`Files too large (max 50MB): ${names}${oversizedFiles.length > 3 ? ` and ${oversizedFiles.length - 3} more` : ''}`);
+      toast.error(`Files too large (max 100MB): ${names}${oversizedFiles.length > 3 ? ` and ${oversizedFiles.length - 3} more` : ''}`);
       const validFiles = fileArray.filter((file) => file.size <= MAX_TRACK_SIZE);
       if (validFiles.length === 0) {
         if (fileInputRef.current) fileInputRef.current.value = '';
@@ -277,11 +278,11 @@ const LibraryView = () => {
 
   // Handle files dropped via drag & drop
   const handleFilesDropped = useCallback(async (files: File[]) => {
-    // Validate file sizes (50MB max per track)
+    // Validate file sizes (100MB max per track)
     const oversizedFiles = files.filter((file) => file.size > MAX_TRACK_SIZE);
     if (oversizedFiles.length > 0) {
       const names = oversizedFiles.slice(0, 3).map((f) => f.name).join(', ');
-      toast.error(`Files too large (max 50MB): ${names}${oversizedFiles.length > 3 ? ` and ${oversizedFiles.length - 3} more` : ''}`);
+      toast.error(`Files too large (max 100MB): ${names}${oversizedFiles.length > 3 ? ` and ${oversizedFiles.length - 3} more` : ''}`);
       const validFiles = files.filter((file) => file.size <= MAX_TRACK_SIZE);
       if (validFiles.length === 0) return;
       files = validFiles;

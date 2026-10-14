@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { PlayCircle, Disc3, Shuffle, Search, Music, Play, History, AlertCircle } from 'lucide-react';
 import { usePlaylistStore } from '@/stores/playlistStore';
-import { usePlayerStore, shuffleArray } from '@/stores/playerStore';
+import { usePlayerStore } from '@/stores/playerStore';
+import { balancedShuffle } from '@/utils/shuffle';
 import { useAuthStore } from '@/stores/authStore';
 import { api, HistoryEntry } from '@/services/api';
 import { formatDuration, formatTimeAgo } from '@/utils/time';
@@ -51,7 +52,7 @@ const HomeView = () => {
   // Shuffle the whole library, not just the 8 most recent tracks
   const handleShuffleAll = () => {
     if (library.length === 0) return;
-    const shuffled = shuffleArray(library);
+    const shuffled = balancedShuffle(library, { recent: usePlayerStore.getState().recentPlays });
     play(shuffled[0], shuffled);
   };
 

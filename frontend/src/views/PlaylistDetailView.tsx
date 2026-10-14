@@ -15,7 +15,8 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { usePlaylistStore } from '@/stores/playlistStore';
-import { usePlayerStore, shuffleArray } from '@/stores/playerStore';
+import { usePlayerStore } from '@/stores/playerStore';
+import { balancedShuffle } from '@/utils/shuffle';
 import { useAuthStore } from '@/stores/authStore';
 import { Track, api } from '@/services/api';
 import { playlistCoverUrl } from '@/utils/cover';
@@ -28,7 +29,7 @@ import DropZone from '@/components/ui/DropZone';
 import SortableTrackRow from '@/components/ui/SortableTrackRow';
 
 // File size limits
-const MAX_TRACK_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_TRACK_SIZE = 100 * 1024 * 1024; // 100MB, the server's upload limit
 
 type SortOption = 'default' | 'title-asc' | 'title-desc' | 'artist' | 'duration' | 'date-added';
 
@@ -149,11 +150,11 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
 
     const fileArray = Array.from(files);
 
-    // Validate file sizes (50MB max per track)
+    // Validate file sizes (100MB max per track)
     const oversizedFiles = fileArray.filter((file) => file.size > MAX_TRACK_SIZE);
     if (oversizedFiles.length > 0) {
       const names = oversizedFiles.slice(0, 3).map((f) => f.name).join(', ');
-      toast.error(`Files too large (max 50MB): ${names}${oversizedFiles.length > 3 ? ` and ${oversizedFiles.length - 3} more` : ''}`);
+      toast.error(`Files too large (max 100MB): ${names}${oversizedFiles.length > 3 ? ` and ${oversizedFiles.length - 3} more` : ''}`);
       const validFiles = fileArray.filter((file) => file.size <= MAX_TRACK_SIZE);
       if (validFiles.length === 0) {
         if (fileInputRef.current) fileInputRef.current.value = '';
@@ -229,7 +230,7 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
   const handleShuffle = () => {
     const tracks = currentPlaylist?.tracks || [];
     if (tracks.length > 0) {
-      const shuffled = shuffleArray(tracks);
+      const shuffled = balancedShuffle(tracks, { recent: usePlayerStore.getState().recentPlays });
       if (shuffled[0]) {
         play(shuffled[0], shuffled);
       }
@@ -260,11 +261,11 @@ const PlaylistDetailView = ({ playlistId }: PlaylistDetailViewProps) => {
 
   // Handle files dropped via drag & drop
   const handleFilesDropped = useCallback(async (files: File[]) => {
-    // Validate file sizes (50MB max per track)
+    // Validate file sizes (100MB max per track)
     const oversizedFiles = files.filter((file) => file.size > MAX_TRACK_SIZE);
     if (oversizedFiles.length > 0) {
       const names = oversizedFiles.slice(0, 3).map((f) => f.name).join(', ');
-      toast.error(`Files too large (max 50MB): ${names}${oversizedFiles.length > 3 ? ` and ${oversizedFiles.length - 3} more` : ''}`);
+      toast.error(`Files too large (max 100MB): ${names}${oversizedFiles.length > 3 ? ` and ${oversizedFiles.length - 3} more` : ''}`);
       const validFiles = files.filter((file) => file.size <= MAX_TRACK_SIZE);
       if (validFiles.length === 0) return;
       files = validFiles;

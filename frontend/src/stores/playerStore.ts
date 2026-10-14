@@ -3,6 +3,7 @@ import { persist, createJSONStorage, StateStorage } from 'zustand/middleware';
 import { Track, UserPreferences, api } from '@/services/api';
 import { audioEngine } from '@/services/audioEngine';
 import { usePlaybackStore } from '@/stores/playbackStore';
+import { shuffleArray, balancedShuffle } from '@/utils/shuffle';
 
 // Debounce for server preferences sync
 let _syncPrefTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -61,24 +62,28 @@ const debouncedStorage: StateStorage = {
   },
 };
 
-// Fisher–Yates; Array.sort(() => Math.random() - 0.5) is biased and unstable
-export function shuffleArray<T>(items: T[]): T[] {
-  const result = [...items];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [result[i], result[j]] = [result[j]!, result[i]!];
-  }
-  return result;
+export { shuffleArray };
+
+// Current track first, the rest shuffled with artists spread out. The queue itself is
+// reordered, so the queue panel always shows the real play order and the next track is
+// known in advance (needed for gapless preload and crossfade).
+function shuffledAround(queue: Track[], index: number, recent: string[]): Track[] {
+  const current = queue[index];
+  if (!current) return balancedShuffle(queue, { recent });
+  return [current, ...balancedShuffle(queue.filter((_, i) => i !== index), { recent })];
 }
 
-// Current track first, the rest shuffled. The queue itself is reordered, so the queue
-// panel always shows the real play order and the next track is known in advance
-// (needed for gapless preload and crossfade).
-function shuffledAround(queue: Track[], index: number): Track[] {
-  const current = queue[index];
-  if (!current) return shuffleArray(queue);
-  return [current, ...shuffleArray(queue.filter((_, i) => i !== index))];
-}
+/** How many recently played track ids to remember, for shuffle's "fewer repeats". */
+const RECENT_PLAYS = 50;
+
+/** Fetch more radio when fewer than this many tracks are left after the current one. */
+const RADIO_REFILL_AT = 5;
+const RADIO_BATCH = 25;
+
+// Bumped whenever the queue stops being the radio station it was (new play, radio stop,
+// clear). A fetch that started under an older session drops its result.
+let _radioSession = 0;
+let _radioFetch: { session: number; advance: boolean } | null = null;
 
 interface PlayerState {
   currentTrack: Track | null;
@@ -90,6 +95,8 @@ interface PlayerState {
   loadId: number;
   /** True when the most recent track change was automatic (end of track), used for crossfade. */
   autoAdvance: boolean;
+  /** Ids of recently started tracks, most recent last. Shuffle holds these back. */
+  recentPlays: string[];
 
   isPlaying: boolean;
   volume: number;
@@ -109,9 +116,12 @@ interface PlayerState {
   eqPreset: string;
   showEqualizer: boolean;
 
+  /** The queue is a station: it refills itself with similar tracks as it plays. */
   radioMode: boolean;
   radioSourceTrackId: string | null;
   radioAutoStarted: boolean;
+  /** A station refill is in flight. */
+  radioLoading: boolean;
 
   sleepTimerEnd: number | null;
   sleepTimerMinutes: number | null;
@@ -143,7 +153,11 @@ interface PlayerState {
   reorderQueue: (fromIndex: number, toIndex: number) => void;
   clearQueue: () => void;
   setSleepTimer: (minutes: number | null) => void;
-  startRadio: (track: Track, similarTracks: Track[]) => void;
+  /**
+   * Play `track` (or keep playing it, if current) followed by a station of similar
+   * tracks. Resolves false if no similar tracks were found.
+   */
+  startRadio: (track: Track) => Promise<boolean>;
   stopRadio: () => void;
   loadPreferences: (prefs: UserPreferences) => void;
   /** Swap in fresh copies of tracks (e.g. after the library loads) without touching playback. */
@@ -157,10 +171,12 @@ const initialSession = {
   queue: [] as Track[],
   queueIndex: -1,
   originalQueue: null,
+  recentPlays: [] as string[],
   isPlaying: false,
   radioMode: false,
   radioSourceTrackId: null,
   radioAutoStarted: false,
+  radioLoading: false,
   sleepTimerEnd: null,
   sleepTimerMinutes: null,
 };
@@ -177,31 +193,74 @@ export const usePlayerStore = create<PlayerState>()(
           isPlaying: playNow,
           autoAdvance: auto,
           loadId: s.loadId + 1,
+          recentPlays: [...s.recentPlays.filter((id) => id !== track.id), track.id].slice(-RECENT_PLAYS),
         }));
+        refillRadio();
       };
 
-      const autoStartRadio = (track: Track) => {
-        api.getSimilarTracks(track.id, { limit: 30 })
+      /**
+       * Append the next batch of the station, seeded by the current track and anchored to
+       * the station's source. With `advance`, also move on to the first new track (used
+       * when playback reached the end of the queue while waiting).
+       */
+      const extendRadio = (advance = false) => {
+        const session = _radioSession;
+        if (_radioFetch?.session === session) {
+          _radioFetch.advance ||= advance;
+          return;
+        }
+        const { currentTrack: seed, queue, queueIndex, radioSourceTrackId } = get();
+        if (!seed) return;
+        const fetch = { session, advance };
+        _radioFetch = fetch;
+        set({ radioLoading: true });
+
+        const recent = queue.slice(Math.max(0, queueIndex - 4), queueIndex + 1).map((t) => t.id);
+        // The ids go in the URL: past ~150 a long station's request exceeds the server's
+        // header size limit. Older tracks are covered by the server's recently-played penalty.
+        const exclude = [...new Set(queue.map((t) => t.id))].slice(-150);
+
+        api.getSimilarTracks(seed.id, {
+          limit: RADIO_BATCH,
+          excludeIds: exclude.join(','),
+          recentIds: recent.join(','),
+          anchorId: radioSourceTrackId ?? undefined,
+        })
           .then(({ similarTracks }) => {
-            // Bail out if the user started something else while we were fetching
-            if (get().currentTrack?.id !== track.id || similarTracks.length === 0) {
-              if (get().currentTrack?.id === track.id) set({ isPlaying: false });
-              return;
+            if (session !== _radioSession) return;
+            // Done before advancing, so the move to the new track can start the next refill
+            if (_radioFetch === fetch) _radioFetch = null;
+            const { queue: now, queueIndex: index, currentTrack } = get();
+            const present = new Set(now.map((t) => t.id));
+            const fresh = similarTracks.filter((t) => !present.has(t.id));
+            set({ queue: [...now, ...fresh] });
+            if (fetch.advance && currentTrack?.id === seed.id) {
+              // Paused while waiting: line the track up without starting it
+              if (fresh.length > 0) goTo(index + 1, get().queue, true, get().isPlaying);
+              else set({ isPlaying: false });
             }
-            const { queue } = get();
-            set({
-              queue: [...queue, ...similarTracks],
-              originalQueue: null,
-              shuffle: false,
-              radioMode: true,
-              radioSourceTrackId: track.id,
-              radioAutoStarted: true,
-            });
-            goTo(queue.length, get().queue, true);
-            if (_radioAutoStartedTimeout) clearTimeout(_radioAutoStartedTimeout);
-            _radioAutoStartedTimeout = setTimeout(() => set({ radioAutoStarted: false }), 4000);
           })
-          .catch(() => set({ isPlaying: false }));
+          .catch(() => {
+            if (session === _radioSession && fetch.advance) set({ isPlaying: false });
+          })
+          .finally(() => {
+            if (_radioFetch === fetch) _radioFetch = null;
+            // A newer refill may already be in flight (started by the advance above)
+            if (session === _radioSession && !_radioFetch) set({ radioLoading: false });
+          });
+      };
+
+      /** Keep a station topped up a few tracks ahead, so preload and crossfade never run dry. */
+      const refillRadio = () => {
+        const { radioMode, queue, queueIndex } = get();
+        if (radioMode && queue.length - 1 - queueIndex < RADIO_REFILL_AT) extendRadio();
+      };
+
+      /** A new queue that isn't the current station: drop any refill in flight. */
+      const endRadioSession = () => {
+        _radioSession++;
+        _radioFetch = null;
+        set({ radioMode: false, radioSourceTrackId: null, radioLoading: false });
       };
 
       return {
@@ -224,7 +283,7 @@ export const usePlayerStore = create<PlayerState>()(
 
         play: (track, queue) => {
           if (!track) {
-            if (get().currentTrack) set({ isPlaying: true });
+            get().resume();
             return;
           }
           const source = queue && queue.length > 0 ? queue : [track];
@@ -236,12 +295,13 @@ export const usePlayerStore = create<PlayerState>()(
           }
           if (get().shuffle) {
             set({ originalQueue: playQueue });
-            playQueue = shuffledAround(playQueue, index);
+            playQueue = shuffledAround(playQueue, index, get().recentPlays);
             index = 0;
           } else {
             set({ originalQueue: null });
           }
-          set({ queue: playQueue, radioMode: false, radioSourceTrackId: null });
+          endRadioSession();
+          set({ queue: playQueue });
           goTo(index, playQueue);
         },
 
@@ -250,12 +310,17 @@ export const usePlayerStore = create<PlayerState>()(
         pause: () => set({ isPlaying: false }),
 
         resume: () => {
-          if (get().currentTrack) set({ isPlaying: true });
+          if (!get().currentTrack) return;
+          set({ isPlaying: true });
+          // A station restored from the last visit hasn't refilled since: top it up now
+          refillRadio();
         },
 
         togglePlay: () => {
           const { isPlaying, currentTrack } = get();
-          if (currentTrack) set({ isPlaying: !isPlaying });
+          if (!currentTrack) return;
+          set({ isPlaying: !isPlaying });
+          if (!isPlaying) refillRadio();
         },
 
         peekNext: () => {
@@ -282,9 +347,16 @@ export const usePlayerStore = create<PlayerState>()(
             goTo(queueIndex + 1, queue, auto);
           } else if (repeat === 'all') {
             goTo(0, queue, auto);
-          } else if (currentTrack && !radioMode) {
-            // End of queue: continue with similar tracks instead of stopping
-            autoStartRadio(currentTrack);
+          } else if (currentTrack && radioMode) {
+            // The station ran dry before a refill landed: wait for it
+            extendRadio(true);
+          } else if (currentTrack) {
+            // End of queue: continue with similar tracks instead of stopping, like autoplay
+            _radioSession++;
+            set({ radioMode: true, radioSourceTrackId: currentTrack.id, radioAutoStarted: true, originalQueue: null });
+            if (_radioAutoStartedTimeout) clearTimeout(_radioAutoStartedTimeout);
+            _radioAutoStartedTimeout = setTimeout(() => set({ radioAutoStarted: false }), 4000);
+            extendRadio(true);
           } else {
             set({ isPlaying: false });
           }
@@ -325,12 +397,15 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         toggleShuffle: () => {
-          const { shuffle, queue, queueIndex, originalQueue, currentTrack } = get();
-          if (!shuffle) {
+          const { shuffle, queue, queueIndex, originalQueue, currentTrack, radioMode } = get();
+          if (radioMode) {
+            // A station is already in a random order; the setting applies to the next playlist
+            set({ shuffle: !shuffle });
+          } else if (!shuffle) {
             set({
               shuffle: true,
               originalQueue: queue,
-              queue: shuffledAround(queue, queueIndex),
+              queue: shuffledAround(queue, queueIndex, get().recentPlays),
               queueIndex: queue.length > 0 ? 0 : -1,
             });
           } else {
@@ -447,14 +522,14 @@ export const usePlayerStore = create<PlayerState>()(
             return { queue, queueIndex };
           }),
 
-        clearQueue: () =>
+        clearQueue: () => {
+          endRadioSession();
           set((s) => ({
             queue: s.currentTrack ? [s.currentTrack] : [],
             queueIndex: s.currentTrack ? 0 : -1,
             originalQueue: null,
-            radioMode: false,
-            radioSourceTrackId: null,
-          })),
+          }));
+        },
 
         setSleepTimer: (minutes) => {
           if (_sleepTimeout) clearTimeout(_sleepTimeout);
@@ -471,24 +546,34 @@ export const usePlayerStore = create<PlayerState>()(
           }, ms);
         },
 
-        startRadio: (track, similarTracks) => {
-          const queue = [track, ...similarTracks];
-          set({
-            queue,
-            originalQueue: null,
-            radioMode: true,
-            radioSourceTrackId: track.id,
-            shuffle: false,
-          });
-          if (get().currentTrack?.id === track.id) {
-            // Keep playing the current track; just replace what comes after it
-            set({ queueIndex: 0 });
+        startRadio: (track) => {
+          endRadioSession();
+          const session = _radioSession;
+          const keepPlaying = get().currentTrack?.id === track.id;
+          // Start the song right away (or keep it going); the station fills in behind it
+          const station = { queue: [track], originalQueue: null, radioMode: true, radioSourceTrackId: track.id };
+          if (keepPlaying) {
+            set({ ...station, queueIndex: 0, isPlaying: true });
           } else {
-            goTo(0, queue);
+            set(station);
+            goTo(0, [track]);
           }
+          extendRadio();
+          // Resolves once the first batch has landed (or failed)
+          return new Promise<boolean>((resolve) => {
+            const unsubscribe = usePlayerStore.subscribe((s) => {
+              if (session !== _radioSession) {
+                unsubscribe();
+                resolve(false);
+              } else if (!s.radioLoading) {
+                unsubscribe();
+                resolve(s.queue.length > 1);
+              }
+            });
+          });
         },
 
-        stopRadio: () => set({ radioMode: false, radioSourceTrackId: null }),
+        stopRadio: endRadioSession,
 
         loadPreferences: (prefs) => {
           const updates: Partial<PlayerState> = {};
@@ -519,6 +604,8 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         reset: () => {
+          _radioSession++;
+          _radioFetch = null;
           if (_sleepTimeout) clearTimeout(_sleepTimeout);
           _sleepTimeout = null;
           audioEngine.reset();
@@ -549,6 +636,9 @@ export const usePlayerStore = create<PlayerState>()(
         queue: state.queue,
         queueIndex: state.queueIndex,
         originalQueue: state.originalQueue,
+        recentPlays: state.recentPlays,
+        radioMode: state.radioMode,
+        radioSourceTrackId: state.radioSourceTrackId,
       }),
     }
   )

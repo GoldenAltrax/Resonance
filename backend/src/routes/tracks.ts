@@ -6,10 +6,15 @@ import { pipeline } from 'stream/promises';
 import { join } from 'path';
 import { parseFile } from 'music-metadata';
 import { z } from 'zod';
-import { db, tracks, favorites, playHistory, trackSkips, trackPublicColumns } from '../db/index.js';
-import { eq, ne, sql, and, isNull } from 'drizzle-orm';
+import { db, sqlite, tracks, trackSkips, trackPublicColumns } from '../db/index.js';
+import { eq, isNull } from 'drizzle-orm';
 import { authMiddleware, adminMiddleware } from '../middleware/auth.js';
 import { generateFingerprint, lookupAcoustID } from '../utils/fingerprint.js';
+import {
+  artistNames, primaryArtist, similarity, preference, pickStation,
+  CrowdTally, type RadioTrack, type SeedSignals, type UserSignals,
+} from '../services/radio.js';
+import { songKey } from '../utils/matching.js';
 import { ingestAudioFile, backfillAnalysis, resolveStoredFilePath, TEMP_DIR, UPLOADS_BASE } from '../services/ingest.js';
 
 // Schema for logging a track skip
@@ -25,52 +30,123 @@ const updateTrackSchema = z.object({
 });
 
 
-// Musical key compatibility map (for Radio mode similarity matching)
-const KEY_COMPATIBILITY: Record<string, string[]> = {
-  'C': ['C', 'Am', 'G', 'F', 'Em', 'Dm'],
-  'G': ['G', 'Em', 'D', 'C', 'Bm', 'Am'],
-  'D': ['D', 'Bm', 'A', 'G', 'F#m', 'Em'],
-  'A': ['A', 'F#m', 'E', 'D', 'C#m', 'Bm'],
-  'E': ['E', 'C#m', 'B', 'A', 'G#m', 'F#m'],
-  'B': ['B', 'G#m', 'F#', 'E', 'D#m', 'C#m'],
-  'F#': ['F#', 'D#m', 'C#', 'B', 'A#m', 'G#m'],
-  'F': ['F', 'Dm', 'C', 'Bb', 'Am', 'Gm'],
-  'Bb': ['Bb', 'Gm', 'F', 'Eb', 'Dm', 'Cm'],
-  'Eb': ['Eb', 'Cm', 'Bb', 'Ab', 'Gm', 'Fm'],
-  'Ab': ['Ab', 'Fm', 'Eb', 'Db', 'Cm', 'Bbm'],
-  'Db': ['Db', 'Bbm', 'Ab', 'Gb', 'Fm', 'Ebm'],
-  'Am': ['Am', 'C', 'Em', 'Dm', 'G', 'F'],
-  'Em': ['Em', 'G', 'Bm', 'Am', 'D', 'C'],
-  'Bm': ['Bm', 'D', 'F#m', 'Em', 'A', 'G'],
-  'F#m': ['F#m', 'A', 'C#m', 'Bm', 'E', 'D'],
-  'C#m': ['C#m', 'E', 'G#m', 'F#m', 'B', 'A'],
-  'G#m': ['G#m', 'B', 'D#m', 'C#m', 'F#', 'E'],
-  'D#m': ['D#m', 'F#', 'A#m', 'G#m', 'C#', 'B'],
-  'Dm': ['Dm', 'F', 'Am', 'Gm', 'C', 'Bb'],
-  'Gm': ['Gm', 'Bb', 'Dm', 'Cm', 'F', 'Eb'],
-  'Cm': ['Cm', 'Eb', 'Gm', 'Fm', 'Bb', 'Ab'],
-  'Fm': ['Fm', 'Ab', 'Cm', 'Bbm', 'Eb', 'Db'],
-  'Bbm': ['Bbm', 'Db', 'Fm', 'Ebm', 'Ab', 'Gb'],
-};
+type LibraryTrack = RadioTrack & { createdAt: Date | null };
 
-// Check if two keys are compatible (for Radio mode)
-export function areKeysCompatible(key1: string | null, key2: string | null): boolean {
-  if (!key1 || !key2) return true; // If either is unknown, consider compatible
-  const compatible = KEY_COMPATIBILITY[key1];
-  return compatible ? compatible.includes(key2) : false;
+/** Playlists and listening sessions that put other tracks next to the seed. */
+function loadSeedSignals(seed: LibraryTrack, library: LibraryTrack[], userId: string): SeedSignals {
+  const seedArtists = new Set(artistNames(seed.artist));
+  const seedArtistTrackIds = library
+    .filter((t) => artistNames(t.artist).some((a) => seedArtists.has(a)))
+    .map((t) => t.id);
+  if (!seedArtistTrackIds.includes(seed.id)) seedArtistTrackIds.push(seed.id);
+
+  // Every playlist holding the seed or another track by its artists, with all its tracks
+  const rows = sqlite.prepare(`
+    SELECT pt.playlist_id AS playlistId, pt.track_id AS trackId, p.user_id AS ownerId
+    FROM playlist_tracks pt
+    JOIN playlists p ON p.id = pt.playlist_id
+    WHERE pt.playlist_id IN (
+      SELECT playlist_id FROM playlist_tracks
+      WHERE track_id IN (SELECT value FROM json_each(?))
+    )
+  `).all(JSON.stringify(seedArtistTrackIds)) as { playlistId: string; trackId: string; ownerId: string }[];
+
+  const members = new Map<string, { ownerId: string; ids: string[] }>();
+  for (const r of rows) {
+    const playlist = members.get(r.playlistId) ?? { ownerId: r.ownerId, ids: [] };
+    playlist.ids.push(r.trackId);
+    members.set(r.playlistId, playlist);
+  }
+
+  const coPlaylist = new CrowdTally(userId);
+  const artistAffinity = new CrowdTally(userId);
+  const artistOf = new Map(library.map((t) => [t.id, t.artist]));
+  for (const { ownerId, ids } of members.values()) {
+    // A playlist of everything says little about any pair in it: big playlists count for less
+    const weight = Math.min(1, 50 / ids.length);
+    const hasSeed = ids.includes(seed.id);
+    const seenArtists = new Set<string>();
+    for (const tid of ids) {
+      if (tid === seed.id) continue;
+      if (hasSeed) coPlaylist.add(tid, weight, ownerId);
+      for (const a of artistNames(artistOf.get(tid) ?? null)) {
+        if (seedArtists.has(a) || seenArtists.has(a)) continue;
+        seenArtists.add(a);
+        artistAffinity.add(a, weight, ownerId);
+      }
+    }
+  }
+
+  // Tracks played within 30 minutes after the seed, per listener
+  const coPlayRows = sqlite.prepare(`
+    SELECT h2.track_id AS trackId, h1.user_id AS userId, COUNT(*) AS n
+    FROM play_history h1
+    JOIN play_history h2
+      ON h2.user_id = h1.user_id
+     AND h2.played_at > h1.played_at
+     AND h2.played_at <= h1.played_at + 1800
+    WHERE h1.track_id = ? AND h2.track_id != h1.track_id
+    GROUP BY h2.track_id, h1.user_id
+  `).all(seed.id) as { trackId: string; userId: string; n: number }[];
+  const coPlay = new CrowdTally(userId);
+  for (const r of coPlayRows) coPlay.add(r.trackId, r.n, r.userId);
+
+  // Added within 10 minutes of the seed; a bulk import says little, so big batches count less
+  const coAdded = new Map<string, number>();
+  const addedAt = seed.createdAt?.getTime();
+  if (addedAt != null) {
+    const batch = library.filter(
+      (t) => t.id !== seed.id && t.createdAt && Math.abs(t.createdAt.getTime() - addedAt) <= 10 * 60 * 1000
+    );
+    const weight = Math.min(1, 15 / Math.max(batch.length, 1));
+    for (const t of batch) coAdded.set(t.id, weight);
+  }
+
+  return {
+    coPlaylist: coPlaylist.totals(),
+    coPlay: coPlay.totals(),
+    artistAffinity: artistAffinity.totals(),
+    coAdded,
+  };
 }
 
-// Calculate BPM similarity (within range is considered similar)
-export function areBpmsSimilar(bpm1: number | null, bpm2: number | null, tolerance = 15): boolean {
-  if (!bpm1 || !bpm2) return true; // If either is unknown, consider similar
-  return Math.abs(bpm1 - bpm2) <= tolerance;
+/** Artists credited on two or more of the last five tracks heard. */
+function fatiguedArtists(recent: { artist: string | null }[]): Set<string> {
+  const counts = new Map<string, number>();
+  for (const t of recent.slice(-5)) {
+    for (const a of new Set(artistNames(t.artist))) counts.set(a, (counts.get(a) ?? 0) + 1);
+  }
+  return new Set([...counts].filter(([, n]) => n >= 2).map(([a]) => a));
 }
 
-// Calculate energy similarity
-export function areEnergiesSimilar(energy1: number | null, energy2: number | null, tolerance = 25): boolean {
-  if (!energy1 || !energy2) return true; // If either is unknown, consider similar
-  return Math.abs(energy1 - energy2) <= tolerance;
+function loadUserSignals(userId: string, recent: { id: string; artist: string | null }[]): UserSignals {
+  const favorites = new Set(
+    (sqlite.prepare('SELECT track_id AS trackId FROM favorites WHERE user_id = ?').all(userId) as { trackId: string }[])
+      .map((r) => r.trackId)
+  );
+
+  const history = sqlite.prepare(`
+    SELECT track_id AS trackId, COUNT(*) AS n, MAX(played_at) AS last
+    FROM play_history WHERE user_id = ? GROUP BY track_id
+  `).all(userId) as { trackId: string; n: number; last: number }[];
+
+  const skips = sqlite.prepare(`
+    SELECT track_id AS trackId, COUNT(*) AS n
+    FROM track_skips WHERE user_id = ? AND skip_position < 30
+    GROUP BY track_id
+  `).all(userId) as { trackId: string; n: number }[];
+
+  return {
+    favorites,
+    playCounts: new Map(history.map((h) => [h.trackId, h.n])),
+    lastPlayed: new Map(history.map((h) => [h.trackId, h.last * 1000])),
+    earlySkips: new Map(skips.map((s) => [s.trackId, s.n])),
+    recentArtists: fatiguedArtists(recent),
+    now: Date.now(),
+  };
 }
+
+let fingerprintRunning = false;
 
 export async function trackRoutes(app: FastifyInstance) {
   // Get albums (grouped by album tag) — ANY AUTHENTICATED USER
@@ -293,10 +369,10 @@ export async function trackRoutes(app: FastifyInstance) {
     return reply.sendFile(track.filePath, UPLOADS_BASE, { cacheControl: false });
   });
 
-  // Get similar tracks for Radio mode - ANY AUTHENTICATED USER
+  // Radio: tracks that fit after a seed - ANY AUTHENTICATED USER
   app.get<{
     Params: { id: string };
-    Querystring: { limit?: string; excludeIds?: string; recentArtists?: string };
+    Querystring: { limit?: string; excludeIds?: string; recentIds?: string; anchorId?: string };
   }>('/:id/similar', {
     preHandler: authMiddleware,
   }, async (request, reply) => {
@@ -304,162 +380,54 @@ export async function trackRoutes(app: FastifyInstance) {
     const { userId } = request.user as { userId: string };
     const limitRaw = parseInt(request.query.limit || '30', 10);
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(limitRaw, 50)) : 30; // 1–50
+    const idList = (raw?: string, max = 300) => (raw ? raw.split(',').filter(Boolean).slice(0, max) : []);
 
-    // Comma-separated IDs to exclude (already in queue)
-    const excludeIds = request.query.excludeIds
-      ? request.query.excludeIds.split(',').filter(Boolean)
-      : [];
+    // Already queued or played this session
+    const excludeIds = new Set(idList(request.query.excludeIds));
+    // The last few tracks heard, most recent last: their artists are penalized
+    const recentIds = idList(request.query.recentIds, 10);
+    // The station's original seed: keeps a long station from drifting away from it
+    const anchorId = request.query.anchorId && request.query.anchorId !== id ? request.query.anchorId : null;
 
-    // Comma-separated artists played recently (apply penalty for repetition)
-    const recentArtists = request.query.recentArtists
-      ? request.query.recentArtists.split(',').filter(Boolean).map(a => a.toLowerCase())
-      : [];
-
-    const sourceTrack = await db.query.tracks.findFirst({
-      columns: trackPublicColumns,
-      where: eq(tracks.id, id),
-    });
-
+    const allTracks = await db.query.tracks.findMany({ columns: trackPublicColumns });
+    const byId = new Map(allTracks.map((t) => [t.id, t]));
+    const sourceTrack = byId.get(id);
     if (!sourceTrack) {
       return reply.status(404).send({ error: 'Track not found' });
     }
+    const anchorTrack = anchorId ? byId.get(anchorId) ?? null : null;
 
-    // Get all tracks except the source
-    const allOtherTracks = await db.query.tracks.findMany({
-      columns: trackPublicColumns,
-      where: ne(tracks.id, id),
+    const seedSignals = loadSeedSignals(sourceTrack, allTracks, userId);
+    const anchorSignals = anchorTrack ? loadSeedSignals(anchorTrack, allTracks, userId) : null;
+    const user = loadUserSignals(userId, recentIds.map((rid) => byId.get(rid)).filter((t) => t !== undefined));
+
+    const scored = allTracks
+      .filter((t) => t.id !== id && t.id !== anchorId && !excludeIds.has(t.id))
+      .map((track) => {
+        let score = similarity(sourceTrack, track, seedSignals) + preference(track, user);
+        if (anchorTrack && anchorSignals) score += 0.5 * similarity(anchorTrack, track, anchorSignals);
+        return { track, score };
+      });
+
+    // Other copies of the seed, of what's queued and of what was just heard are out too
+    const keyOf = (t: { title: string; artist: string | null }) => songKey(t.title, t.artist);
+    const blockedSongs = new Set(
+      [id, ...(anchorId ? [anchorId] : []), ...excludeIds, ...recentIds]
+        .map((tid) => byId.get(tid))
+        .filter((t) => t !== undefined)
+        .map(keyOf)
+    );
+    const lastHeard = recentIds.length > 0 ? byId.get(recentIds[recentIds.length - 1]!) : sourceTrack;
+    const picked = pickStation(scored, limit, {
+      previousArtist: lastHeard ? primaryArtist(lastHeard) : undefined,
+      songKey: keyOf,
+      blockedSongs,
     });
-
-    // Apply excludeIds filter in-memory
-    const excludeSet = new Set(excludeIds);
-    const otherTracks = excludeSet.size > 0
-      ? allOtherTracks.filter(t => !excludeSet.has(t.id))
-      : allOtherTracks;
-
-    // Get user's favorited track IDs for boost scoring
-    const userFavorites = await db.query.favorites.findMany({
-      where: eq(favorites.userId, userId),
-      columns: { trackId: true },
-    });
-    const favoritedIds = new Set(userFavorites.map(f => f.trackId));
-
-    // Get user's recent play history IDs (last 200) for boost scoring
-    const userHistory = await db.query.playHistory.findMany({
-      where: eq(playHistory.userId, userId),
-      columns: { trackId: true },
-      orderBy: (playHistory, { desc }) => [desc(playHistory.playedAt)],
-      limit: 200,
-    });
-    const historiedIds = new Set(userHistory.map(h => h.trackId));
-
-    // Get early-skip counts per track (skipped at <30% three or more times = penalty)
-    const skipCounts = await db.select({
-      trackId: trackSkips.trackId,
-      count: sql<number>`count(*)`,
-    })
-      .from(trackSkips)
-      .where(and(eq(trackSkips.userId, userId), sql`${trackSkips.skipPosition} < 30`))
-      .groupBy(trackSkips.trackId);
-    const earlySkipMap = new Map(skipCounts.map(s => [s.trackId, Number(s.count)]));
-
-    // Calculate similarity score for each track
-    const scoredTracks = otherTracks.map(track => {
-      let score = 0;
-
-      // Same artist = high score (40 points)
-      if (sourceTrack.artist && track.artist) {
-        const sourceArtistLower = sourceTrack.artist.toLowerCase();
-        const trackArtistLower = track.artist.toLowerCase();
-        if (sourceArtistLower === trackArtistLower) {
-          score += 40;
-        } else if (sourceArtistLower.includes(trackArtistLower) || trackArtistLower.includes(sourceArtistLower)) {
-          score += 20; // Partial artist match
-        }
-      }
-
-      // Same album = medium score (15 points)
-      if (sourceTrack.album && track.album && sourceTrack.album.toLowerCase() === track.album.toLowerCase()) {
-        score += 15;
-      }
-
-      // Similar BPM = medium score (20 points)
-      if (areBpmsSimilar(sourceTrack.bpm, track.bpm)) {
-        score += 20;
-        if (sourceTrack.bpm && track.bpm && Math.abs(sourceTrack.bpm - track.bpm) <= 5) {
-          score += 10;
-        }
-      }
-
-      // Compatible key = medium score (15 points)
-      if (areKeysCompatible(sourceTrack.key, track.key)) {
-        score += 15;
-        if (sourceTrack.key && track.key && sourceTrack.key === track.key) {
-          score += 10;
-        }
-      }
-
-      // Similar energy = medium score (20 points)
-      if (areEnergiesSimilar(sourceTrack.energy, track.energy)) {
-        score += 20;
-        if (sourceTrack.energy && track.energy && Math.abs(sourceTrack.energy - track.energy) <= 10) {
-          score += 10;
-        }
-      }
-
-      // Favorites boost (+15) — user has liked this track
-      if (favoritedIds.has(track.id)) {
-        score += 15;
-      }
-
-      // History boost (+10) — user has played this before (they like it)
-      if (historiedIds.has(track.id)) {
-        score += 10;
-      }
-
-      // Recent artist penalty (-20) — avoid repeating the same artist back-to-back
-      if (track.artist && recentArtists.includes(track.artist.toLowerCase())) {
-        score -= 20;
-      }
-
-      // Early skip penalty (-25) — user consistently skips this track early
-      const skipCount = earlySkipMap.get(track.id) ?? 0;
-      if (skipCount >= 3) {
-        score -= 25;
-      }
-
-      return { track, score };
-    });
-
-    // Sort by score tier descending, random order within a tier for variety.
-    // Shuffle first, then stable-sort by tier (a random comparator is biased and inconsistent).
-    const tier = (score: number) => Math.floor(score / 20);
-    for (let i = scoredTracks.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [scoredTracks[i], scoredTracks[j]] = [scoredTracks[j]!, scoredTracks[i]!];
-    }
-    scoredTracks.sort((a, b) => tier(b.score) - tier(a.score));
-
-    // Apply artist variety: max 2 tracks per artist in the result
-    const artistCount = new Map<string, number>();
-    const varietyFiltered: typeof scoredTracks = [];
-    for (const st of scoredTracks) {
-      const artistKey = st.track.artist?.toLowerCase() ?? '__unknown__';
-      const count = artistCount.get(artistKey) ?? 0;
-      if (count < 2) {
-        varietyFiltered.push(st);
-        artistCount.set(artistKey, count + 1);
-      }
-      if (varietyFiltered.length >= limit) break;
-    }
-
-    const similarTracks = varietyFiltered.map(st => ({
-      ...st.track,
-      similarityScore: st.score,
-    }));
 
     return reply.send({
       sourceTrack,
-      similarTracks,
+      // Scores stay server-side: they partly come from other people's playlists and listening
+      similarTracks: picked.map((st) => st.track),
     });
   });
 
@@ -525,6 +493,11 @@ export async function trackRoutes(app: FastifyInstance) {
     if (toFingerprint.length === 0) {
       return reply.send({ message: 'All tracks already fingerprinted', processed: 0, total: 0 });
     }
+    // A second run would fingerprint the same tracks and double the AcoustID request rate
+    if (fingerprintRunning) {
+      return reply.status(202).send({ message: 'Fingerprinting already running', processed: 0, total: toFingerprint.length });
+    }
+    fingerprintRunning = true;
 
     // Return immediately — fingerprinting runs in the background
     reply.status(202).send({ message: 'Fingerprinting started', total: toFingerprint.length });
@@ -564,7 +537,9 @@ export async function trackRoutes(app: FastifyInstance) {
       }
 
       console.log(`Fingerprinting complete: ${processed} processed, ${failed} failed of ${toFingerprint.length}`);
-    })().catch(err => console.error('fingerprint-all background task failed:', err));
+    })()
+      .catch(err => console.error('fingerprint-all background task failed:', err))
+      .finally(() => { fingerprintRunning = false; });
   });
 
   // Update track metadata - ADMIN ONLY

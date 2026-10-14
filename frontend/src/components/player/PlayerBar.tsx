@@ -158,8 +158,7 @@ export const PlayerBar = () => {
               if (!currentTrack || radioLoading) return;
               setRadioLoading(true);
               try {
-                const { similarTracks } = await api.getSimilarTracks(currentTrack.id, { limit: 30 });
-                if (similarTracks.length > 0) startRadio(currentTrack, similarTracks);
+                await startRadio(currentTrack);
               } finally {
                 setRadioLoading(false);
               }

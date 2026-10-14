@@ -8,7 +8,6 @@ import { toast } from '@/stores/toastStore';
 
 const RESUME_KEY = 'resonance-resume';
 const PRELOAD_LEAD_SECONDS = 30;
-const RADIO_REFILL_THRESHOLD = 3;
 const MAX_CONSECUTIVE_ERRORS = 3;
 
 function readResume(): { trackId: string; position: number } | null {
@@ -43,7 +42,6 @@ export function useAudioPlayer() {
     let failedWhilePaused = false;
     let loggedLoadId = -1;
     let lastResumeWrite = 0;
-    let radioRefillInFlight = false;
 
     const streamUrl = (track: Track) => api.getStreamUrl(track.id);
 
@@ -109,7 +107,8 @@ export function useAudioPlayer() {
           consecutiveErrors = 0;
           return;
         }
-        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS || !s.peekNext()) {
+        // A station with nothing queued yet still continues: next() waits for the refill
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS || (!s.peekNext() && !s.radioMode)) {
           toast.error(`Couldn't play "${title}" (${reason}).`);
           s.pause();
           consecutiveErrors = 0;
@@ -185,9 +184,6 @@ export function useAudioPlayer() {
       if (s.currentTrack !== prev.currentTrack || s.isPlaying !== prev.isPlaying) {
         updateMediaSession(s.currentTrack, s.isPlaying);
       }
-      if (s.queueIndex !== prev.queueIndex || s.queue !== prev.queue) {
-        maybeRefillRadio();
-      }
     });
 
     // The persisted session holds track objects from an earlier visit; refresh them from
@@ -208,31 +204,6 @@ export function useAudioPlayer() {
       if (player.getState().currentTrack) loadCurrent(audioEngine.currentTime);
     };
     window.addEventListener(STREAM_TOKEN_REPLACED, reloadStreams);
-
-    // Radio: keep a few similar tracks queued ahead
-    const maybeRefillRadio = () => {
-      const s = player.getState();
-      if (!s.radioMode || !s.radioSourceTrackId || radioRefillInFlight) return;
-      const remaining = s.queue.length - (s.queueIndex + 1);
-      if (remaining > RADIO_REFILL_THRESHOLD) return;
-      radioRefillInFlight = true;
-      // Recent tracks only: the ids go in the URL, and a long radio session's whole queue
-      // would exceed the server's header size limit (the refill would then fail silently)
-      const excludeIds = s.queue.slice(-150).map((t) => t.id).join(',');
-      const recentArtists = s.queue
-        .slice(Math.max(0, s.queueIndex - 4), s.queueIndex + 1)
-        .map((t) => t.artist)
-        .filter(Boolean)
-        .join(',');
-      api.getSimilarTracks(s.radioSourceTrackId, { limit: 20, excludeIds, recentArtists })
-        .then(({ similarTracks }) => {
-          if (similarTracks.length > 0 && player.getState().radioMode) {
-            player.getState().addToQueue(similarTracks);
-          }
-        })
-        .catch(() => {})
-        .finally(() => { radioRefillInFlight = false; });
-    };
 
     // ── Media Session (lock screen, headset buttons, OS media keys) ─────────
     const updateMediaSession = (track: Track | null, isPlaying: boolean) => {

@@ -12,7 +12,10 @@ function clearUserSession() {
   usePlayerStore.getState().reset();
   useFavoritesStore.getState().clearFavorites();
   usePlaylistStore.setState({ playlists: [], currentPlaylist: null });
-  try { localStorage.removeItem('resonance-resume'); } catch { /* ignore */ }
+  try {
+    localStorage.removeItem('resonance-resume');
+    localStorage.removeItem('resonance_recent_searches');
+  } catch { /* ignore */ }
   navigator.serviceWorker?.controller?.postMessage({ type: 'CLEAR_API_CACHE' });
 }
 
@@ -148,8 +151,10 @@ export const useAuthStore = create<AuthState>()(
           if (refreshed) api.setToken(refreshed);
           set({ user, token: refreshed ?? token, isAuthenticated: true, sessionExpired: false });
         } catch (err) {
-          // Offline / server unreachable: keep the stored session so the app shell still works
-          if (!(err instanceof HttpError)) {
+          // Only a 401 means the session is over (handleSessionExpired has already run).
+          // Offline, a 502 while the server restarts for a deploy, or a 429: keep the stored
+          // session so the app shell still works and the next start signs in normally.
+          if (!(err instanceof HttpError) || err.status !== 401) {
             set({ isAuthenticated: true });
             return;
           }

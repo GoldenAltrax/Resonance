@@ -71,6 +71,14 @@ export async function authRoutes(app: FastifyInstance) {
         return reply.status(403).send({ error: 'Invitation code is required' });
       }
 
+      // Admin rights follow ADMIN_USERNAME, so that account can only be created with the
+      // server's own SIGNUP_SECRET, never with an invite code handed to someone else
+      // (e.g. after a fresh deploy, before the admin has signed up)
+      if (process.env.ADMIN_USERNAME && body.username === process.env.ADMIN_USERNAME
+        && (!LEGACY_SIGNUP_SECRET || body.secretCode !== LEGACY_SIGNUP_SECRET)) {
+        return reply.status(400).send({ error: 'Username already exists' });
+      }
+
       // Check if username exists
       const existingUsername = await db.query.users.findFirst({
         where: eq(users.username, body.username),

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { X, ListMusic, Trash2, GripVertical } from 'lucide-react';
+import { X, ListMusic, Trash2, GripVertical, Radio, Loader2 } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -134,7 +134,9 @@ const SortableQueueItem = ({
 };
 
 const QueuePanel = () => {
-  const { queue, queueIndex, currentTrack, isPlaying, shuffle, showQueue } = usePlayerStore(
+  const {
+    queue, queueIndex, currentTrack, isPlaying, shuffle, showQueue, radioMode, radioSourceTrackId, radioLoading,
+  } = usePlayerStore(
     useShallow((s) => ({
       queue: s.queue,
       queueIndex: s.queueIndex,
@@ -142,6 +144,9 @@ const QueuePanel = () => {
       isPlaying: s.isPlaying,
       shuffle: s.shuffle,
       showQueue: s.showQueue,
+      radioMode: s.radioMode,
+      radioSourceTrackId: s.radioSourceTrackId,
+      radioLoading: s.radioLoading,
     }))
   );
   const { toggleQueue, playAt, removeFromQueue, reorderQueue, clearQueue } = usePlayerStore.getState();
@@ -186,6 +191,7 @@ const QueuePanel = () => {
 
   const upcomingTracks = queue.slice(queueIndex + 1);
   const previousTracks = queue.slice(0, queueIndex);
+  const radioSource = radioMode ? queue.find((t) => t.id === radioSourceTrackId) ?? null : null;
 
   return (
     <div className="fixed top-0 right-0 bottom-0 md:bottom-24 z-[60] md:z-40 pointer-events-none">
@@ -207,7 +213,7 @@ const QueuePanel = () => {
                 {queue.length} {queue.length === 1 ? 'track' : 'tracks'}
               </p>
             </div>
-            {shuffle && queue.length > 0 && (
+            {shuffle && !radioMode && queue.length > 0 && (
               <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 tabular-nums">
                 {queueIndex + 1} / {queue.length}
               </span>
@@ -270,11 +276,25 @@ const QueuePanel = () => {
                   )}
 
                   {/* Up Next */}
-                  {upcomingTracks.length > 0 && (
+                  {(upcomingTracks.length > 0 || radioLoading) && (
                     <div>
-                      <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2 px-3">
-                        Up Next
-                      </h4>
+                      {radioMode ? (
+                        <div className="flex items-center gap-2 mb-2 px-3 min-w-0">
+                          <Radio className="w-3.5 h-3.5 text-green-400 shrink-0" />
+                          <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider shrink-0">
+                            Radio
+                          </h4>
+                          {radioSource && (
+                            <span className="text-xs text-zinc-600 truncate">
+                              based on {radioSource.title}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-2 px-3">
+                          Up Next
+                        </h4>
+                      )}
                       <div className="space-y-1">
                         {upcomingTracks.map((track, i) => {
                           const absIndex = queueIndex + 1 + i;
@@ -290,6 +310,12 @@ const QueuePanel = () => {
                             />
                           );
                         })}
+                        {radioLoading && (
+                          <div className="flex items-center gap-2 px-3 py-2.5 text-xs text-zinc-600">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            Finding similar songs
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}

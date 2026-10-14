@@ -109,13 +109,8 @@ function MenuPanel({ track }: { track: Track }) {
   const targetPlaylists = playlists.filter((p) => p.id !== context.playlistId);
 
   const startRadio = async () => {
-    try {
-      const { similarTracks } = await api.getSimilarTracks(track.id, { limit: 30 });
-      player.startRadio(track, similarTracks);
-      toast.success(`Radio started from "${track.title}"`);
-    } catch {
-      toast.error('Couldn\'t start radio');
-    }
+    if (await player.startRadio(track)) toast.success(`Radio started from "${track.title}"`);
+    else if (usePlayerStore.getState().radioSourceTrackId === track.id) toast.error('Couldn\'t start radio');
   };
 
   const addToPlaylist = (playlistId: string) => {

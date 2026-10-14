@@ -163,6 +163,12 @@ export async function playlistRoutes(app: FastifyInstance) {
 
     await db.delete(playlists).where(eq(playlists.id, id));
 
+    // Uploaded cover: the row is gone, so nothing else points at the file
+    if (existing.coverImage && !existing.coverImage.startsWith('http')) {
+      const coverPath = resolveStoredFilePath(existing.coverImage);
+      if (coverPath) await unlink(coverPath).catch(() => {});
+    }
+
     return reply.status(204).send();
   });
 

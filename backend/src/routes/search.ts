@@ -16,7 +16,8 @@ export async function searchRoutes(app: FastifyInstance) {
       return reply.send({ tracks: [], playlists: [] });
     }
 
-    const searchTerm = `%${q.trim().toLowerCase()}%`;
+    // % and _ in the query are literal characters, not LIKE wildcards
+    const searchTerm = `%${q.trim().toLowerCase().replace(/[%_\\]/g, '\\$&')}%`;
     const parsedLimit = parseInt(limitStr || '20', 10);
     const limit = isNaN(parsedLimit) ? 20 : Math.max(1, Math.min(parsedLimit, 50)); // LIMIT -1 means unlimited in SQLite
     const searchType = type || 'all'; // 'all', 'tracks', 'playlists'
@@ -36,9 +37,9 @@ export async function searchRoutes(app: FastifyInstance) {
         .from(tracks)
         .where(
           or(
-            sql`lower(${tracks.title}) LIKE ${searchTerm}`,
-            sql`lower(${tracks.artist}) LIKE ${searchTerm}`,
-            sql`lower(${tracks.album}) LIKE ${searchTerm}`
+            sql`lower(${tracks.title}) LIKE ${searchTerm} ESCAPE '\\'`,
+            sql`lower(${tracks.artist}) LIKE ${searchTerm} ESCAPE '\\'`,
+            sql`lower(${tracks.album}) LIKE ${searchTerm} ESCAPE '\\'`
           )
         )
         .limit(limit);
@@ -53,8 +54,8 @@ export async function searchRoutes(app: FastifyInstance) {
         .from(playlists)
         .where(
           sql`${playlists.userId} = ${userId} AND (
-            lower(${playlists.name}) LIKE ${searchTerm} OR
-            lower(${playlists.description}) LIKE ${searchTerm}
+            lower(${playlists.name}) LIKE ${searchTerm} ESCAPE '\\' OR
+            lower(${playlists.description}) LIKE ${searchTerm} ESCAPE '\\'
           )`
         )
         .limit(limit);

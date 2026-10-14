@@ -220,11 +220,15 @@ class ApiClient {
     return `${API_URL}/tracks/${id}/stream${token}`;
   }
 
-  async getSimilarTracks(id: string, options?: { limit?: number; excludeIds?: string; recentArtists?: string }) {
+  async getSimilarTracks(
+    id: string,
+    options?: { limit?: number; excludeIds?: string; recentIds?: string; anchorId?: string }
+  ) {
     const params = new URLSearchParams();
     params.set('limit', String(options?.limit ?? 30));
     if (options?.excludeIds) params.set('excludeIds', options.excludeIds);
-    if (options?.recentArtists) params.set('recentArtists', options.recentArtists);
+    if (options?.recentIds) params.set('recentIds', options.recentIds);
+    if (options?.anchorId) params.set('anchorId', options.anchorId);
     return this.request<SimilarTracksResponse>(`/tracks/${id}/similar?${params.toString()}`);
   }
 
@@ -575,7 +579,7 @@ export interface AlbumSummary {
 
 export interface SimilarTracksResponse {
   sourceTrack: Track;
-  similarTracks: (Track & { similarityScore: number })[];
+  similarTracks: Track[];
 }
 
 export interface PlaylistWithTracks extends Playlist {

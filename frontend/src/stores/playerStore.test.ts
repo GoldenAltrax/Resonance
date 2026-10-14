@@ -253,3 +253,110 @@ describe('refreshTracks', () => {
     expect(state().loadId).toBe(loadId);
   });
 });
+
+describe('radio', () => {
+  const similar = vi.mocked(api.getSimilarTracks);
+    const station = (list: Track[]) => Promise.resolve({ sourceTrack: list[0]!, similarTracks: list });
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it('starting radio plays the track at once and fills the station behind it', async () => {
+    similar.mockReturnValueOnce(station([track('s1'), track('s2')]));
+    const started = state().startRadio(track('x'));
+    expect(state().currentTrack?.id).toBe('x');
+    expect(state().isPlaying).toBe(true);
+    expect(state().radioMode).toBe(true);
+    expect(await started).toBe(true);
+    expect(ids(state().queue)).toEqual(['x', 's1', 's2']);
+    expect(similar).toHaveBeenCalledTimes(1);
+    expect(similar.mock.calls[0]![1]).toMatchObject({ excludeIds: 'x', recentIds: 'x', anchorId: 'x' });
+  });
+
+  it('refills when the station runs low, seeded by the current track', async () => {
+    similar.mockReturnValueOnce(station([track('s1'), track('s2')]));
+    await state().startRadio(track('x'));
+    similar.mockReturnValueOnce(station([track('s3'), track('s1')]));
+    state().next();
+    await flush();
+    expect(similar.mock.calls[1]![0]).toBe('s1');
+    expect(similar.mock.calls[1]![1]).toMatchObject({ anchorId: 'x' });
+    // s1 was already queued: not added twice
+    expect(ids(state().queue)).toEqual(['x', 's1', 's2', 's3']);
+  });
+
+  it('drops a station batch that arrives after something else started playing', async () => {
+    let resolve!: (v: Awaited<ReturnType<typeof api.getSimilarTracks>>) => void;
+    similar.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    const started = state().startRadio(track('x'));
+    state().play(tracks[0], tracks);
+    resolve({ sourceTrack: track('x'), similarTracks: [track('s1')] });
+    expect(await started).toBe(false);
+    await flush();
+    expect(ids(state().queue)).toEqual(ids(tracks));
+    expect(state().radioMode).toBe(false);
+  });
+
+  it('starting radio from the current, paused track starts playback', async () => {
+    state().play(tracks[0], tracks);
+    state().pause();
+    similar.mockReturnValueOnce(station([track('s1')]));
+    await state().startRadio(tracks[0]!);
+    expect(state().isPlaying).toBe(true);
+    expect(ids(state().queue)).toEqual(['a', 's1']);
+  });
+
+  it('refills again right after resuming from an empty station', async () => {
+    similar.mockReturnValueOnce(station([track('s1')]));
+    await state().startRadio(track('x'));
+    state().next(); // now on s1, the last track: a refill starts and comes back empty
+    await flush();
+    similar.mockReturnValueOnce(station([track('s2')]));
+    state().next({ auto: true }); // end of station: waits for the refill
+    similar.mockReturnValueOnce(station([track('s3')]));
+    await flush();
+    await flush();
+    expect(state().currentTrack?.id).toBe('s2');
+    // Moving to s2 left nothing queued, so the next batch was fetched straight away
+    expect(ids(state().queue)).toEqual(['x', 's1', 's2', 's3']);
+    expect(state().radioLoading).toBe(false);
+  });
+
+  it('lines up the next station track without playing it if paused while waiting', async () => {
+    similar.mockReturnValueOnce(station([]));
+    await state().startRadio(track('x'));
+    similar.mockReturnValueOnce(station([track('s1')]));
+    state().next({ auto: true }); // end of station: waits for the refill
+    state().pause();
+    await flush();
+    expect(state().currentTrack?.id).toBe('s1');
+    expect(state().isPlaying).toBe(false);
+  });
+
+  it('tops up a restored station when playback resumes', async () => {
+    usePlayerStore.setState({
+      queue: [track('x'), track('s1')], queueIndex: 1, currentTrack: track('s1'),
+      radioMode: true, radioSourceTrackId: 'x', isPlaying: false,
+    });
+    similar.mockReturnValueOnce(station([track('s2')]));
+    state().togglePlay();
+    await flush();
+    expect(ids(state().queue)).toEqual(['x', 's1', 's2']);
+  });
+
+  it('continues with a station at the end of a normal queue', async () => {
+    state().play(tracks[4], tracks);
+    similar.mockReturnValueOnce(station([track('s1')]));
+    state().next({ auto: true });
+    expect(state().radioMode).toBe(true);
+    await flush();
+    expect(state().currentTrack?.id).toBe('s1');
+    expect(state().radioSourceTrackId).toBe('e');
+  });
+
+  it('stops at the end when no similar tracks exist', async () => {
+    state().play(tracks[4], tracks);
+    state().next({ auto: true });
+    await flush();
+    expect(state().currentTrack?.id).toBe('e');
+    expect(state().isPlaying).toBe(false);
+  });
+});

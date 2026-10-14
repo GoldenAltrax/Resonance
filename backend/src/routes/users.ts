@@ -4,7 +4,7 @@ import { unlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { db, users } from '../db/index.js';
 import { eq } from 'drizzle-orm';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, isAdmin } from '../middleware/auth.js';
 import { IMAGES_DIR, resolveStoredFilePath } from '../services/ingest.js';
 import { readLimited } from '../utils/upload.js';
 
@@ -81,6 +81,10 @@ export async function userRoutes(app: FastifyInstance) {
       if (!current) return reply.status(404).send({ error: 'User not found' });
       if (body.username && body.username !== current.username && body.username === process.env.ADMIN_USERNAME) {
         return reply.status(409).send({ error: 'Username already exists' });
+      }
+      // Renaming the admin would drop their rights and free the name for someone else
+      if (body.username && body.username !== current.username && isAdmin(current.username, current.email)) {
+        return reply.status(409).send({ error: 'The admin username is set on the server (ADMIN_USERNAME) and can\'t be changed here' });
       }
       if (body.username && body.username !== current.username) {
         const taken = await db.query.users.findFirst({ columns: { id: true }, where: eq(users.username, body.username) });
